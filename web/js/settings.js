@@ -74,9 +74,10 @@ export function renderSettings(view, rerender) {
       h('div', { class: 'row' }, f('Anthropic-API-Key', 'anthropicKey', { type: 'password' }, 'console.anthropic.com → API Keys'), f('Claude-Modell', 'claudeModel', {}, 'z. B. claude-sonnet-5-5, claude-opus-5-5, claude-haiku-5-5')),
       f('Kopf: head-brain', 'kopfUrl', { placeholder: 'http://192.168.1.20:8100' }, 'OpenAI-kompatible API deines Kopfs. Der Port muss vom Unraid-Server aus erreichbar sein (siehe README).'),
       h('div', { class: 'row' }, f('Kopf: head-output (Sprache)', 'kopfOutputUrl', { placeholder: 'http://192.168.1.20:8600' }), f('Kopf: head-vision (Kamera)', 'kopfVisionUrl', { placeholder: 'http://192.168.1.20:8400' })),
-      h('div', { class: 'row' }, f('Kopf-Modellname', 'kopfModel'), sel('Kopf bekommt Werkzeuge', 'kopfTools', [['true', 'Ja (Haus, Server, Mesh, Projekte)'], ['false', 'Nein, nur Gespräch']]))),
+      h('div', { class: 'row' }, f('Kopf-Modellname', 'kopfModel'), sel('Kopf bekommt Werkzeuge', 'kopfTools', [['true', 'Ja (Haus, Server, Mesh, Projekte)'], ['false', 'Nein, nur Gespräch']])),
+      kopfVoiceBox()),
     card('radio-tower', 'Meshtastic (MQTT)', h('div', { style: { marginBottom: '12px' } }, meshChip),
-      f('MQTT-Broker', 'mqttUrl', { placeholder: 'mqtt://192.168.1.10:1883' }, 'Im Node: MQTT-Modul aktivieren, „JSON output“ einschalten, Uplink im Kanal aktivieren.'),
+      f('MQTT-Broker', 'mqttUrl', { placeholder: 'mqtt://192.168.1.10:1883' }, 'Im Gateway-Node: MQTT-Modul aktivieren und im Kanal Uplink einschalten. Verschlüsselte Pakete werden direkt gelesen; „JSON output“ ist nur zum Senden nötig.'),
       h('div', { class: 'row' }, f('Benutzer', 'mqttUser'), f('Passwort', 'mqttPassword', { type: 'password' })),
       f('Topics', 'meshTopic', {}, 'Kommagetrennt, Standard: msh/#'),
       h('div', { class: 'row' }, f('Gateway-Node (zum Senden)', 'meshGatewayId', { placeholder: '!a1b2c3d4' }), f('Kanal-Index', 'meshChannel', { type: 'number' })),
@@ -193,4 +194,23 @@ function deviceCard() {
     field('Werte im Schoner', ents),
     h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => { saveKiosk(k); toast('Für dieses Gerät gespeichert'); } }, icon('content-save'), 'Übernehmen'),
       h('button', { class: 'btn', onclick: () => { saveKiosk(k); showSaver(); } }, icon('monitor-eye'), 'Schoner testen')));
+}
+
+
+// ---------- Kopf per Sprache: Befehl für den PC ----------
+function kopfVoiceBox() {
+  const cmd = () => `kopf-smarthome ${location.origin} ${S.settings.agentToken}`;
+  const code = h('code', { class: 'cmd' }, cmd());
+  return h('div', { class: 'field' }, h('span', {}, 'Kopf auch per Sprache (Mikrofon am PC)'),
+    h('div', { class: 'hint' }, 'Damit Kopf auf Zuruf Licht schalten oder nach dem Server sehen kann, diesen Befehl einmal auf dem PC ausführen:'),
+    h('div', { class: 'cmd-row' }, code,
+      h('button', { type: 'button', class: 'btn icon sm', title: 'Kopieren', onclick: () => navigator.clipboard?.writeText(cmd()).then(() => toast('Kopiert')) }, icon('content-copy')),
+      h('button', { type: 'button', class: 'btn icon sm', title: 'Neuen Schlüssel erzeugen', onclick: async () => {
+        if (!confirm('Neuen Schlüssel erzeugen? Danach den Befehl auf dem PC erneut ausführen.')) return;
+        const token = Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b.toString(16).padStart(2, '0')).join('');
+        const { settings } = await api('/settings', { method: 'PUT', body: { agentToken: token } });
+        S.settings = settings;
+        code.textContent = cmd();
+      } }, icon('key-change'))),
+    h('div', { class: 'hint' }, 'Erlaubt sind dieselben Werkzeuge wie für Claude; Schalten nur, wenn „KI darf Smart Home steuern“ an ist.'));
 }

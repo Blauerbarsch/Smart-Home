@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import * as store from './store.js';
 import { ha } from './ha.js';
 import { mesh } from './mesh.js';
-import { chat, kopfStatus, kopfSpeak } from './ai.js';
+import { chat, kopfStatus, kopfSpeak, runTool, toolsFor } from './ai.js';
 import { alerts, RULE_TYPES } from './alerts.js';
 import { github, APP_COMMIT } from './github.js';
 import * as unraid from './unraid.js';
@@ -349,6 +349,31 @@ route('POST', '/api/esphome/run', async (req, res) => {
   res.end();
 });
 
+// Agent-Schnittstelle für Kopf (head-brain): Werkzeuge auflisten und ausführen.
+// Eigener Schlüssel statt Login, damit Kopf ohne Browser-Sitzung zugreifen kann.
+const agentOk = (req) => {
+  const token = store.settings().agentToken;
+  const got = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  return token && got.length === token.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(token));
+};
+route('GET', '/api/agent/tools', (req, res) => {
+  if (!agentOk(req)) return json(res, 401, { error: 'Falscher Agent-Schlüssel' });
+  json(res, 200, { tools: toolsFor(Boolean(store.settings().aiHomeControl)) });
+});
+route('POST', '/api/agent/call', async (req, res) => {
+  if (!agentOk(req)) return json(res, 401, { error: 'Falscher Agent-Schlüssel' });
+  const { name, input, projectId } = await body(req);
+  const allowed = toolsFor(Boolean(store.settings().aiHomeControl)).some((t) => t.name === name);
+  if (!allowed) return json(res, 403, { error: `Werkzeug ${name} nicht erlaubt` });
+  try {
+    const result = await runTool(name, input || {}, projectId);
+    broadcast('agent', { name, input, at: Date.now() });
+    json(res, 200, { result });
+  } catch (e) {
+    json(res, 200, { result: { error: e.message } });
+  }
+});
+
 // ---------- Server ----------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -356,7 +381,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (pathname === '/healthz') return json(res, 200, { ok: true, version: VERSION });
     if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
-    if (!authed(req) && !['/api/auth', '/api/login'].includes(pathname)) return json(res, 401, { error: 'Anmeldung nötig' });
+    if (!authed(req) && !['/api/auth', '/api/login'].includes(pathname) && !pathname.startsWith('/api/agent/')) return json(res, 401, { error: 'Anmeldung nötig' });
     for (const r of routes) {
       const m = r.method === req.method && pathname.match(r.re);
       if (m) return await r.handler(req, res, m.groups || {}, url.searchParams);

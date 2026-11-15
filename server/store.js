@@ -39,6 +39,7 @@ const DEFAULT_CONFIG = {
     esphomeUrl: '',
     defaultAi: 'claude',
     kopfTools: true,
+    agentToken: '',
     aiHomeControl: true,
     accent: '#00d8ff',
     title: 'Zuhause',
@@ -85,6 +86,11 @@ let config = readJson('config.json', DEFAULT_CONFIG);
 config.settings = { ...DEFAULT_CONFIG.settings, ...config.settings };
 if (!Array.isArray(config.tabs) || !config.tabs.length) config.tabs = structuredClone(DEFAULT_CONFIG.tabs);
 if (!Array.isArray(config.sites)) config.sites = [];
+// Schlüssel für die Agent-Schnittstelle (Kopf ruft darüber Werkzeuge auf)
+if (!config.settings.agentToken) {
+  config.settings.agentToken = crypto.randomBytes(18).toString('base64url');
+  writeJson('config.json', config);
+}
 // Einmalige Ergänzungen für bestehende Installationen
 config.migrations ||= [];
 if (!config.migrations.includes('v2-server-tab')) {

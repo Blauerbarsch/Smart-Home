@@ -113,7 +113,7 @@ const TOOLS = [
   },
 ];
 
-async function runTool(name, input, projectId) {
+export async function runTool(name, input, projectId) {
   switch (name) {
     case 'find_entities':
       return ha.summary(input.query || '').slice(0, 60);
@@ -166,7 +166,7 @@ async function runTool(name, input, projectId) {
 }
 
 const CONTROL_TOOLS = ['find_entities', 'call_service', 'manage_server'];
-const toolsFor = (withHome) => (withHome ? TOOLS : TOOLS.filter((t) => !CONTROL_TOOLS.includes(t.name)));
+export const toolsFor = (withHome) => (withHome ? TOOLS : TOOLS.filter((t) => !CONTROL_TOOLS.includes(t.name)));
 
 // ---------- Claude ----------
 async function chatClaude({ messages, projectId }, emit, signal) {

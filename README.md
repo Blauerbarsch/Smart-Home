@@ -138,6 +138,11 @@ kopf-lan 192.168.188.175     # nur der Unraid-Server darf zugreifen (firewalld)
 Mit „Kopf bekommt Werkzeuge“ kann Kopf im Dashboard auch Licht schalten, nach dem
 Server sehen oder Projektaufgaben anlegen (Ollama-Tool-Calls über head-brain).
 
+**Auch per Sprache** (Mikrofon am PC): Einstellungen → KI zeigt einen Befehl
+`kopf-smarthome <Adresse> <Schlüssel>`. Einmal auf dem PC ausführen – danach reagiert
+Kopf auf „Mach das Licht in der Werkstatt an“ oder „Läuft der Minecraft-Server?“.
+Kopf nutzt dafür die Agent-Schnittstelle `/api/agent/*` mit eigenem Schlüssel.
+
 ## Als App nutzen
 
 - **Handy**: Seite öffnen → Browsermenü → *Zum Startbildschirm hinzufügen*.

@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>smart-home</Name>
+  <Repository>ghcr.io/blauerbarsch/smart-home:latest</Repository>
+  <Registry>https://github.com/Blauerbarsch/Smart-Home/pkgs/container/smart-home</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Blauerbarsch/Smart-Home</Support>
+  <Project>https://github.com/Blauerbarsch/Smart-Home</Project>
+  <Overview>Smart-Home-Übersicht: Home Assistant, ESPHome, Meshtastic (MQTT), Standorte auf der Karte und eine Werkstatt mit Claude und lokaler KI (Kopf). Als App installierbar (PWA).</Overview>
+  <Category>HomeAutomation: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/Blauerbarsch/Smart-Home/main/web/icons/icon-512.png</Icon>
+  <Config Name="WebUI-Port" Target="8080" Default="8480" Mode="tcp" Description="Port der Oberfläche" Type="Port" Display="always" Required="true">8480</Config>
+  <Config Name="Daten" Target="/data" Default="/mnt/user/appdata/smart-home" Mode="rw" Description="Einstellungen, Layout, Projekte, Mesh-Verlauf" Type="Path" Display="always" Required="true">/mnt/user/appdata/smart-home</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Type="Variable" Display="advanced" Required="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Type="Variable" Display="advanced" Required="false">100</Config>
+  <Config Name="Zeitzone" Target="TZ" Default="Europe/Berlin" Type="Variable" Display="advanced" Required="false">Europe/Berlin</Config>
+  <Config Name="Passwort (optional)" Target="APP_PASSWORD" Default="" Description="Leer = kein Login" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Home Assistant URL" Target="HA_URL" Default="" Description="z. B. http://192.168.1.10:8123 – oder in der Oberfläche eintragen" Type="Variable" Display="always" Required="false"></Config>
+  <Config Name="Home Assistant Token" Target="HA_TOKEN" Default="" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Anthropic API Key" Target="ANTHROPIC_API_KEY" Default="" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Kopf head-brain URL" Target="KOPF_URL" Default="" Description="z. B. http://192.168.1.20:8100" Type="Variable" Display="advanced" Required="false"></Config>
+  <Config Name="Kopf head-output URL" Target="KOPF_OUTPUT_URL" Default="" Type="Variable" Display="advanced" Required="false"></Config>
+  <Config Name="Kopf head-vision URL" Target="KOPF_VISION_URL" Default="" Type="Variable" Display="advanced" Required="false"></Config>
+  <Config Name="MQTT URL (Meshtastic)" Target="MQTT_URL" Default="" Description="z. B. mqtt://192.168.1.10:1883" Type="Variable" Display="always" Required="false"></Config>
+  <Config Name="MQTT Benutzer" Target="MQTT_USER" Default="" Type="Variable" Display="advanced" Required="false"></Config>
+  <Config Name="MQTT Passwort" Target="MQTT_PASSWORD" Default="" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+</Container>

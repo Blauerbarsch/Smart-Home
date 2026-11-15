@@ -1,0 +1,9 @@
+{
+  "name": "smart-home-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Smart-Home-Übersicht mit Home Assistant, ESPHome, Meshtastic, Standorten und KI-Werkstatt",
+  "scripts": { "start": "node server/server.js", "dev": "node --watch server/server.js" },
+  "engines": { "node": ">=22" }
+}

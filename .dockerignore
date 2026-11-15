@@ -1,0 +1,7 @@
+.git
+data
+node_modules
+desktop
+unraid
+*.md
+!docker-entrypoint.sh

@@ -1,0 +1,22 @@
+{
+  "name": "Smart Home",
+  "short_name": "Zuhause",
+  "description": "Smart-Home-Übersicht mit Home Assistant, Meshtastic, Standorten und KI-Werkstatt",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#05080d",
+  "theme_color": "#05080d",
+  "lang": "de",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "shortcuts": [
+    { "name": "Standorte", "url": "/#map" },
+    { "name": "Werkstatt", "url": "/#workshop" }
+  ]
+}

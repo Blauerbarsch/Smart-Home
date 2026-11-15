@@ -1,0 +1,23 @@
+services:
+  smart-home:
+    build: .
+    image: ghcr.io/blauerbarsch/smart-home:latest
+    container_name: smart-home
+    restart: unless-stopped
+    ports:
+      - "8480:8080"
+    volumes:
+      - /mnt/user/appdata/smart-home:/data
+    environment:
+      TZ: Europe/Berlin
+      # Optional – alles kann auch in der Oberfläche eingetragen werden:
+      # APP_PASSWORD: "geheim"
+      # HA_URL: "http://192.168.1.10:8123"
+      # HA_TOKEN: "…"
+      # ANTHROPIC_API_KEY: "sk-ant-…"
+      # KOPF_URL: "http://192.168.1.20:8100"
+      # KOPF_OUTPUT_URL: "http://192.168.1.20:8600"
+      # KOPF_VISION_URL: "http://192.168.1.20:8400"
+      # MQTT_URL: "mqtt://192.168.1.10:1883"
+      # MQTT_USER: ""
+      # MQTT_PASSWORD: ""

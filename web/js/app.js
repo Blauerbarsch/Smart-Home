@@ -1,6 +1,8 @@
 import { S, h, icon, api, on, emit, toast, setAccent, saveLayout } from './core.js';
 import { renderGrid } from './grid.js';
 import { renderSettings } from './settings.js';
+import { bellButton, updateButton, showAlert } from './notify.js';
+import { currentProfile, tabVisible, applyKiosk, fullscreen, kioskConfig } from './kiosk.js';
 
 const view = document.getElementById('view');
 let cleanup = null;
@@ -15,6 +17,7 @@ async function boot() {
     connectEvents();
     renderNav();
     route();
+    applyKiosk();
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   } catch (e) {
     view.replaceChildren(h('div', { class: 'empty' }, 'Server nicht erreichbar: ' + e.message));
@@ -36,6 +39,13 @@ function load(d) {
   S.mesh.nodes = new Map(d.mesh.nodes.map((n) => [n.id, n]));
   S.mesh.messages = d.mesh.messages;
   S.authRequired = d.auth;
+  S.update = d.update;
+  S.commit = d.commit;
+  S.version = d.version;
+  S.container = d.container;
+  S.haNotifications = d.haNotifications || [];
+  S.activeAlerts = d.activeAlerts || [];
+  S.profile = currentProfile();
   setAccent(S.settings.accent);
   document.title = S.settings.title || 'Zuhause';
   document.getElementById('brand-title').textContent = S.settings.title || 'Zuhause';
@@ -91,6 +101,29 @@ function connectEvents() {
     S.mesh.messages.push(m);
     emit('mesh-text', m);
   });
+  es.addEventListener('mesh-trace', (e) => emit('mesh-trace', JSON.parse(e.data)));
+  es.addEventListener('alert', (e) => {
+    const a = JSON.parse(e.data);
+    S.activeAlerts = a.level === 'ok' ? S.activeAlerts.slice(1) : [...S.activeAlerts, { key: a.rule, since: a.ts }];
+    showAlert(a);
+    emit('notifications-changed');
+  });
+  es.addEventListener('ha-notifications', (e) => {
+    const before = S.haNotifications.length;
+    S.haNotifications = JSON.parse(e.data);
+    if (S.haNotifications.length > before) showAlert({ title: S.haNotifications.at(-1).title || 'Home Assistant', text: S.haNotifications.at(-1).message, level: 'info' });
+    emit('notifications-changed');
+  });
+  es.addEventListener('app-update', (e) => { S.update = JSON.parse(e.data); emit('app-update'); });
+  es.addEventListener('projects', (e) => {
+    const d = JSON.parse(e.data);
+    if (d.created) {
+      // Lokale Änderungen (z. B. Chat) behalten, neue Projekte ergänzen
+      const known = new Set(S.projects.map((p) => p.id));
+      S.projects.push(...d.projects.filter((p) => !known.has(p.id)));
+      emit('projects');
+    }
+  });
   es.onerror = () => { S.ha = { ...S.ha, status: 'offline' }; renderStatus(); };
   es.addEventListener('hello', () => renderStatus());
 }
@@ -98,7 +131,7 @@ function connectEvents() {
 // ---------- Navigation ----------
 function renderNav() {
   const tabs = document.getElementById('tabs');
-  tabs.replaceChildren(...S.tabs.filter((t) => !t.hidden).map((t) =>
+  tabs.replaceChildren(...S.tabs.filter(tabVisible).map((t) =>
     h('button', { class: 'nav-btn', 'data-tab': t.id, onclick: () => (location.hash = '#' + t.id) }, icon(t.icon || 'view-dashboard'), h('span', {}, t.name))));
   document.querySelector('.nav-bottom .nav-btn').onclick = () => (location.hash = '#settings');
 }
@@ -119,7 +152,7 @@ function renderStatus() {
 
 function route() {
   const [id, sub] = location.hash.slice(1).split('/');
-  const tab = S.tabs.find((t) => t.id === id) || (id === 'settings' ? { id: 'settings', name: 'Einstellungen', type: 'settings' } : S.tabs.find((t) => !t.hidden));
+  const tab = S.tabs.find((t) => t.id === id) || (id === 'settings' ? { id: 'settings', name: 'Einstellungen', type: 'settings' } : S.tabs.find(tabVisible) || S.tabs[0]);
   S.current = tab;
   cleanup?.();
   cleanup = null;
@@ -127,7 +160,8 @@ function route() {
   document.getElementById('page-title').textContent = tab.name;
   document.getElementById('topbar').style.display = tab.type === 'workshop' ? 'none' : '';
   const actions = document.getElementById('top-actions');
-  actions.replaceChildren();
+  actions.replaceChildren(...[updateButton(), bellButton(),
+    kioskConfig().enabled ? h('button', { class: 'btn icon', title: 'Vollbild', onclick: fullscreen }, icon('fullscreen')) : null].filter(Boolean));
   view.replaceChildren();
   view.className = '';
   renderStatus();
@@ -141,7 +175,7 @@ function route() {
       btn.replaceChildren(icon(S.editing ? 'check' : 'pencil'));
       emit('edit');
     } }, icon(S.editing ? 'check' : 'pencil'));
-    actions.append(btn);
+    actions.prepend(btn);
     cleanup = renderGrid(tab, view);
   } else if (type === 'map') {
     view.className = 'full';
@@ -149,12 +183,30 @@ function route() {
   } else if (type === 'workshop') {
     view.className = 'full';
     import('./workshop.js').then((m) => { if (S.current === tab) cleanup = m.renderWorkshop(view, sub); });
+  } else if (type === 'server') {
+    import('./server.js').then((m) => { if (S.current === tab) cleanup = m.renderServer(view, actions); });
+  } else if (type === 'floorplan') {
+    view.className = 'full';
+    import('./floorplan.js').then((m) => { if (S.current === tab) cleanup = m.renderFloorplan(tab, view, actions); });
   } else if (type === 'settings') {
     cleanup = renderSettings(view, () => { renderNav(); route(); });
   }
 }
 
 addEventListener('hashchange', route);
+
+// Unraid- und Dienst-Status für Kacheln regelmäßig holen
+async function pollUnraid() {
+  if (!S.settings.unraidUrl) return;
+  try { S.unraid = await api('/unraid'); emit('unraid'); } catch {}
+}
+async function pollServices() {
+  try { S.services = await api('/services'); emit('services'); } catch {}
+}
+on('unraid-refresh', pollUnraid);
+setInterval(pollUnraid, 20000);
+setInterval(pollServices, 60000);
+setTimeout(() => { pollUnraid(); pollServices(); }, 800);
 // Mesh-Status-Chip regelmäßig auffrischen (Zeit läuft ab)
 setInterval(renderStatus, 60000);
 export { saveLayout };

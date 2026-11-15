@@ -6,8 +6,8 @@ import crypto from 'node:crypto';
 export const DATA_DIR = process.env.DATA_DIR || path.resolve('data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const SECRET_KEYS = ['haToken', 'anthropicKey', 'mqttPassword'];
-const URL_KEYS = { haUrl: 'http://', kopfUrl: 'http://', kopfOutputUrl: 'http://', kopfVisionUrl: 'http://', esphomeUrl: 'http://', mqttUrl: 'mqtt://' };
+const SECRET_KEYS = ['haToken', 'anthropicKey', 'mqttPassword', 'meshKeys', 'githubToken', 'ntfyToken', 'inventreeToken', 'unraidApiKey', 'moonrakerKey'];
+const URL_KEYS = { haUrl: 'http://', kopfUrl: 'http://', kopfOutputUrl: 'http://', kopfVisionUrl: 'http://', esphomeUrl: 'http://', mqttUrl: 'mqtt://', inventreeUrl: 'http://', ntfyUrl: 'https://', unraidUrl: 'http://' };
 
 function readJson(file, fallback) {
   try {
@@ -38,6 +38,7 @@ const DEFAULT_CONFIG = {
     kopfVisionUrl: '',
     esphomeUrl: '',
     defaultAi: 'claude',
+    kopfTools: true,
     aiHomeControl: true,
     accent: '#00d8ff',
     title: 'Zuhause',
@@ -48,6 +49,18 @@ const DEFAULT_CONFIG = {
     meshSendTopic: '',
     meshGatewayId: '',
     meshChannel: 0,
+    meshKeys: '',
+    githubUser: 'Blauerbarsch',
+    githubToken: '',
+    githubAutoProjects: true,
+    notifyHaService: '',
+    ntfyUrl: '',
+    ntfyToken: '',
+    notifyKopf: false,
+    unraidUrl: '',
+    unraidApiKey: '',
+    inventreeUrl: '',
+    inventreeToken: '',
   },
   sites: [],
   tabs: [
@@ -63,6 +76,7 @@ const DEFAULT_CONFIG = {
       ],
     },
     { id: 'map', name: 'Standorte', icon: 'map-marker-radius', type: 'map' },
+    { id: 'server', name: 'Server', icon: 'server', type: 'server' },
     { id: 'workshop', name: 'Werkstatt', icon: 'atom-variant', type: 'workshop' },
   ],
 };
@@ -71,6 +85,16 @@ let config = readJson('config.json', DEFAULT_CONFIG);
 config.settings = { ...DEFAULT_CONFIG.settings, ...config.settings };
 if (!Array.isArray(config.tabs) || !config.tabs.length) config.tabs = structuredClone(DEFAULT_CONFIG.tabs);
 if (!Array.isArray(config.sites)) config.sites = [];
+// Einmalige Ergänzungen für bestehende Installationen
+config.migrations ||= [];
+if (!config.migrations.includes('v2-server-tab')) {
+  if (!config.tabs.some((t) => t.type === 'server')) {
+    const i = config.tabs.findIndex((t) => t.type === 'workshop');
+    config.tabs.splice(i < 0 ? config.tabs.length : i, 0, { id: 'server', name: 'Server', icon: 'server', type: 'server' });
+  }
+  config.migrations.push('v2-server-tab');
+  writeJson('config.json', config);
+}
 
 // Umgebungsvariablen haben Vorrang (praktisch für Unraid-Template).
 const ENV_MAP = {
@@ -86,6 +110,14 @@ const ENV_MAP = {
   mqttUser: 'MQTT_USER',
   mqttPassword: 'MQTT_PASSWORD',
   meshTopic: 'MESH_TOPIC',
+  meshKeys: 'MESH_KEYS',
+  githubUser: 'GITHUB_USER',
+  githubToken: 'GITHUB_TOKEN',
+  inventreeUrl: 'INVENTREE_URL',
+  inventreeToken: 'INVENTREE_TOKEN',
+  ntfyUrl: 'NTFY_URL',
+  unraidUrl: 'UNRAID_URL',
+  unraidApiKey: 'UNRAID_API_KEY',
 };
 
 export function settings() {
@@ -199,6 +231,8 @@ export const projects = {
       tasks: [],
       parts: [],
       entities: [],
+      resources: [],
+      repo: '',
       notes: '',
       log: [],
       chat: [],

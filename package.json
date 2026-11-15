@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "description": "Smart-Home-Übersicht mit Home Assistant, ESPHome, Meshtastic, Standorten und KI-Werkstatt",
-  "scripts": { "start": "node server/server.js", "dev": "node --watch server/server.js" },
+  "scripts": { "start": "node --disable-warning=ExperimentalWarning server/server.js", "dev": "node --disable-warning=ExperimentalWarning --watch server/server.js" },
   "engines": { "node": ">=22" }
 }

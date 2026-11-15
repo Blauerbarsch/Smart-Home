@@ -8,11 +8,16 @@ import * as store from './store.js';
 import { ha } from './ha.js';
 import { mesh } from './mesh.js';
 import { chat, kopfStatus, kopfSpeak } from './ai.js';
+import { alerts, RULE_TYPES } from './alerts.js';
+import { github, APP_COMMIT } from './github.js';
+import * as unraid from './unraid.js';
+import * as services from './services.js';
+import * as maker from './maker.js';
 
 const PORT = Number(process.env.PORT || 8080);
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
 const PASSWORD = process.env.APP_PASSWORD || '';
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 // ---------- Anmeldung (optional über APP_PASSWORD) ----------
 const sessions = new Set(store.readJson('sessions.json', []));
@@ -32,6 +37,11 @@ ha.on('snapshot', () => broadcast('snapshot', { states: [...ha.states.values()],
 mesh.on('node', (n) => broadcast('mesh-node', n));
 mesh.on('text', (m) => broadcast('mesh-text', m));
 mesh.on('status', (s) => broadcast('mesh', s));
+mesh.on('trace', (t) => broadcast('mesh-trace', t));
+ha.on('notifications', (n) => broadcast('ha-notifications', n));
+alerts.on('alert', (a) => broadcast('alert', a));
+github.on('update', (u) => broadcast('app-update', u));
+github.on('synced', async (r) => broadcast('projects', { projects: store.projects.list, ...r }));
 setInterval(() => broadcast('ping', Date.now()), 25000).unref();
 
 // ---------- Hilfen ----------
@@ -46,16 +56,25 @@ function json(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-async function body(req) {
+async function rawBody(req, limit = 5e6) {
   const chunks = [];
   let size = 0;
   for await (const c of req) {
     size += c.length;
-    if (size > 5e6) throw new Error('Anfrage zu groß');
+    if (size > limit) throw new Error('Anfrage zu groß');
     chunks.push(c);
   }
-  const raw = Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+
+async function body(req) {
+  const raw = (await rawBody(req)).toString('utf8');
   return raw ? JSON.parse(raw) : {};
+}
+
+function sse(res) {
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' });
+  return (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 async function pipeFetch(res, upstream) {
@@ -82,7 +101,12 @@ function serveStatic(req, res, pathname) {
 function bootstrap() {
   return {
     version: VERSION,
+    commit: APP_COMMIT,
+    update: github.update,
     auth: Boolean(PASSWORD),
+    container: process.env.HOST_CONTAINERNAME || null,
+    haNotifications: Object.values(ha.notifications),
+    activeAlerts: alerts.active(),
     settings: store.publicSettings(),
     envLocked: store.envLocked(),
     ...store.layout(),
@@ -140,7 +164,8 @@ route('PUT', '/api/settings', async (req, res) => {
   const patch = await body(req);
   store.saveSettings(patch);
   if ('haUrl' in patch || 'haToken' in patch) ha.restart();
-  if (['mqttUrl', 'mqttUser', 'mqttPassword', 'meshTopic'].some((k) => k in patch)) mesh.restart();
+  if (['mqttUrl', 'mqttUser', 'mqttPassword', 'meshTopic', 'meshKeys'].some((k) => k in patch)) mesh.restart();
+  if (['githubUser', 'githubToken', 'githubAutoProjects'].some((k) => k in patch)) github.sync().catch(() => {});
   json(res, 200, { settings: store.publicSettings() });
 });
 
@@ -180,6 +205,8 @@ route('PUT', '/api/projects/:id', async (req, res, p) => {
   updated ? json(res, 200, updated) : json(res, 404, { error: 'nicht gefunden' });
 });
 route('DELETE', '/api/projects/:id', (req, res, p) => {
+  const proj = store.projects.get(p.id);
+  if (proj?.repo) github.ignore(proj.repo); // gelöschte Repo-Projekte nicht wieder anlegen
   store.projects.remove(p.id);
   json(res, 200, { ok: true });
 });
@@ -214,7 +241,11 @@ route('GET', '/api/kopf/snapshot', async (req, res) => {
 
 // Meshtastic
 route('GET', '/api/mesh/nodes', (req, res) => json(res, 200, mesh.list()));
-route('GET', '/api/mesh/history/:id', (req, res, p) => json(res, 200, mesh.history(decodeURIComponent(p.id))));
+route('GET', '/api/mesh/history/:id', (req, res, p, q) => json(res, 200, mesh.history(decodeURIComponent(p.id), Number(q.get('days')) || 7)));
+route('GET', '/api/mesh/analysis', (req, res, p, q) => json(res, 200, mesh.analysis(Math.min(Number(q.get('hours')) || 24, 24 * 30))));
+route('GET', '/api/mesh/links', (req, res, p, q) => json(res, 200, mesh.links(Number(q.get('days')) || 7)));
+route('GET', '/api/mesh/traces', (req, res) => json(res, 200, mesh.traces()));
+route('GET', '/api/mesh/messages', (req, res, p, q) => json(res, 200, mesh.messagesFor(q.get('node'), 300)));
 route('PUT', '/api/mesh/node/:id', async (req, res, p) => {
   mesh.rename(decodeURIComponent(p.id), (await body(req)).alias);
   json(res, 200, { ok: true });
@@ -231,10 +262,91 @@ route('POST', '/api/mesh/send', async (req, res) => {
 
 // ESPHome-Dashboard (Geräteliste)
 route('GET', '/api/esphome/devices', async (req, res) => {
-  const url = store.settings().esphomeUrl;
-  if (!url) return json(res, 200, { configured: [], importable: [] });
-  const r = await fetch(url.replace(/\/$/, '') + '/devices', { signal: AbortSignal.timeout(5000) });
-  json(res, r.status, await r.json());
+  if (!store.settings().esphomeUrl) return json(res, 200, { configured: [], importable: [] });
+  json(res, 200, await maker.espDevices());
+});
+
+// Alarme
+route('GET', '/api/alerts', (req, res) => json(res, 200, { rules: alerts.rules, types: RULE_TYPES, history: alerts.history(), active: alerts.active() }));
+route('PUT', '/api/alerts/rules', async (req, res) => {
+  alerts.setRules((await body(req)).rules || []);
+  json(res, 200, { rules: alerts.rules });
+});
+route('POST', '/api/alerts/test', async (req, res) => {
+  const { channels } = await body(req);
+  await alerts.notify({ level: 'info', title: 'Test vom Smart-Home-Dashboard', text: 'Wenn du das liest, funktionieren die Benachrichtigungen.', channels });
+  json(res, 200, { ok: true });
+});
+route('POST', '/api/ha/notifications/:id/dismiss', async (req, res, p) => {
+  await ha.dismissNotification(decodeURIComponent(p.id));
+  json(res, 200, { ok: true });
+});
+
+// Unraid
+route('GET', '/api/unraid', async (req, res, p, q) => json(res, 200, await unraid.overview(q.get('force') === '1')));
+route('POST', '/api/unraid/:kind/:id/:action', async (req, res, p) => {
+  const id = decodeURIComponent(p.id);
+  const r = p.kind === 'vm' ? await unraid.vmAction(id, p.action) : await unraid.containerAction(id, p.action);
+  json(res, 200, { ok: true, result: r });
+});
+route('GET', '/api/unraid/notifications', async (req, res) => json(res, 200, await unraid.notifications()));
+
+// Dashboard-Update
+route('GET', '/api/update', async (req, res, p, q) => json(res, 200, q.get('check') ? await github.checkUpdate() : github.update));
+route('POST', '/api/update', async (req, res) => json(res, 200, await unraid.selfUpdate()));
+
+// GitHub
+route('GET', '/api/github/repos', (req, res) => json(res, 200, { repos: github.repos, synced: github.synced, error: github.error }));
+route('POST', '/api/github/sync', async (req, res) => json(res, 200, { ...(await github.sync()), projects: store.projects.list }));
+route('GET', '/api/github/repo/:owner/:name', async (req, res, p) => json(res, 200, await github.details(`${p.owner}/${p.name}`)));
+
+// Dienste, JSON-Kacheln, Drucker
+route('GET', '/api/services', (req, res) => json(res, 200, services.status()));
+route('POST', '/api/services/check', async (req, res) => { await services.checkAll(); json(res, 200, services.status()); });
+route('GET', '/api/tile-json/:id', async (req, res, p) => json(res, 200, await services.fetchTileJson(p.id)));
+route('GET', '/api/printer/:id', async (req, res, p) => json(res, 200, await maker.printerStatus(p.id)));
+route('GET', '/api/printer/:id/snapshot', async (req, res, p) => pipeFetch(res, await maker.printerSnapshot(p.id)));
+
+// Uploads + Projekt-Tagebuch
+route('POST', '/api/upload', async (req, res) => {
+  const url = maker.saveUpload(await rawBody(req, 15e6), String(req.headers['content-type'] || '').split(';')[0]);
+  json(res, 200, { url });
+});
+route('GET', '/api/uploads/:file', (req, res, p) => {
+  const f = maker.uploadPath(p.file);
+  if (!f) return json(res, 404, { error: 'nicht gefunden' });
+  res.writeHead(200, { 'content-type': MIME[path.extname(f)] || ({ '.jpg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.pdf': 'application/pdf' })[path.extname(f)] || 'application/octet-stream', 'cache-control': 'private, max-age=86400' });
+  fs.createReadStream(f).pipe(res);
+});
+route('GET', '/api/projects/:id/log', (req, res, p) => json(res, 200, maker.diary.list(p.id)));
+route('POST', '/api/projects/:id/log', async (req, res, p) => json(res, 200, maker.diary.add(p.id, await body(req))));
+route('DELETE', '/api/projects/:id/log/:logId', (req, res, p) => { maker.diary.remove(p.id, Number(p.logId)); json(res, 200, { ok: true }); });
+
+// InvenTree
+route('GET', '/api/inventree/search', async (req, res, p, q) => json(res, 200, await maker.inventreeSearch(q.get('q') || '')));
+route('GET', '/api/inventree/parts', async (req, res, p, q) => json(res, 200, await maker.inventreeParts((q.get('ids') || '').split(',').filter(Boolean))));
+
+// ESPHome
+route('GET', '/api/esphome/config', async (req, res, p, q) => {
+  res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+  res.end(await maker.espConfig(q.get('configuration')));
+});
+route('PUT', '/api/esphome/config', async (req, res, p, q) => {
+  await maker.espSaveConfig(q.get('configuration'), (await rawBody(req)).toString('utf8'));
+  json(res, 200, { ok: true });
+});
+route('POST', '/api/esphome/run', async (req, res) => {
+  const { configuration, action } = await body(req);
+  const emit = sse(res);
+  const ctrl = new AbortController();
+  res.on('close', () => ctrl.abort());
+  try {
+    const code = await maker.espRun(configuration, action, (line) => emit('line', { line }), ctrl.signal);
+    emit('exit', { code });
+  } catch (e) {
+    emit('error', { message: e.message });
+  }
+  res.end();
 });
 
 // ---------- Server ----------
@@ -261,6 +373,11 @@ server.listen(PORT, () => {
   console.log(`Smart-Home-Dashboard ${VERSION} läuft auf http://0.0.0.0:${PORT} (Daten: ${store.DATA_DIR})`);
   ha.connect();
   mesh.restart();
+  alerts.start();
+  github.start();
+  services.startChecks();
+  // Unraid-Daten für Alarme (Container/VM gestoppt) regelmäßig holen
+  setInterval(() => unraid.overview().then((o) => (alerts.extra.unraid = o)).catch(() => {}), 60000).unref();
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

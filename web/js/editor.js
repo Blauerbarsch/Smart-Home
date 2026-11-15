@@ -115,6 +115,12 @@ export function editTile(original) {
           input = h('select', { class: 'input', onchange: (e) => (tile[f.key] = e.target.value) }, h('option', { value: '' }, '– wählen –'),
             S.sites.map((s) => h('option', { value: s.id, selected: s.id === val }, s.name)));
           break;
+        case 'resource': {
+          const list = () => ((tile.kind === 'vm' ? S.unraid?.vms : S.unraid?.containers) || []).map((x) => x.name);
+          input = h('select', { class: 'input', onchange: (e) => (tile[f.key] = e.target.value) }, h('option', { value: '' }, S.unraid ? '– wählen –' : 'Unraid-API nicht verbunden'),
+            [...new Set([...list(), val].filter(Boolean))].map((n) => h('option', { value: n, selected: n === val }, n)));
+          break;
+        }
         case 'project':
           input = h('select', { class: 'input', onchange: (e) => (tile[f.key] = e.target.value) }, h('option', { value: '' }, '– wählen –'),
             S.projects.map((p) => h('option', { value: p.id, selected: p.id === val }, p.name)));
@@ -125,6 +131,22 @@ export function editTile(original) {
       form.append(field(f.label, input, f.hint));
     }
     form.append(field('Größe (Breite × Höhe)', sizeControl(tile)));
+    // Bedingung: Kachel nur zeigen, wenn eine Entität einen bestimmten Zustand hat
+    const condLbl = h('span', {}, tile.condEntity ? friendly(S.states.get(tile.condEntity), tile.condEntity) : 'immer zeigen');
+    const condRow = h('div', { class: 'row', style: { display: tile.condEntity ? '' : 'none' } },
+      h('select', { class: 'input', style: { flex: '0 0 80px' }, onchange: (e) => (tile.condOp = e.target.value) }, ['=', '!=', '>', '<'].map((o) => h('option', { value: o, selected: (tile.condOp || '=') === o }, o))),
+      h('input', { class: 'input', value: tile.condValue ?? 'on', placeholder: 'on', oninput: (e) => (tile.condValue = e.target.value) }));
+    form.append(field('Nur zeigen, wenn …', h('div', {},
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn', style: { justifyContent: 'flex-start' }, onclick: async () => {
+          const id = await pickEntity();
+          if (!id) return;
+          tile.condEntity = id;
+          condLbl.textContent = friendly(S.states.get(id), id);
+          condRow.style.display = '';
+        } }, icon('eye-check-outline'), condLbl),
+        h('button', { type: 'button', class: 'btn', style: { flex: '0 0 auto' }, onclick: () => { delete tile.condEntity; condLbl.textContent = 'immer zeigen'; condRow.style.display = 'none'; } }, icon('close'))),
+      condRow), 'z. B. Waschmaschine = on, Temperatur > 25. Im Bearbeiten-Modus bleibt die Kachel sichtbar.'));
     let saved = false;
     modal([icon(type.icon), type.label], form, {
       actions: (close) => [h('button', { class: 'btn primary', onclick: () => { saved = true; close(); resolve(tile); } }, 'Speichern')],

@@ -21,3 +21,6 @@ services:
       # MQTT_URL: "mqtt://192.168.1.10:1883"
       # MQTT_USER: ""
       # MQTT_PASSWORD: ""
+      # UNRAID_URL: "http://192.168.188.175"
+      # UNRAID_API_KEY: "…"
+      # GITHUB_TOKEN: "…"   # nur für private Repos

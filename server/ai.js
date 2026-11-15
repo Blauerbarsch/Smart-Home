@@ -3,6 +3,9 @@
 import { settings, projects, id, layout } from './store.js';
 import { ha } from './ha.js';
 import { mesh } from './mesh.js';
+import * as unraid from './unraid.js';
+import { github } from './github.js';
+import { inventreeSearch } from './maker.js';
 
 async function* sseLines(res) {
   const decoder = new TextDecoder();
@@ -30,6 +33,8 @@ function projectContext(projectId) {
     parts && `Teile:\n${parts}`,
     p.notes && `Notizen:\n${p.notes.slice(0, 3000)}`,
     p.entities?.length && `Verknüpfte Entitäten: ${p.entities.join(', ')}`,
+    p.repo && `GitHub-Repo: ${p.repo}`,
+    p.resources?.length && `Läuft auf: ${p.resources.map((r) => `${r.type} ${r.name}`).join(', ')}`,
   ].filter(Boolean).join('\n');
 }
 
@@ -41,7 +46,7 @@ function systemPrompt(projectId, withHome) {
     'Der Nutzer bastelt viel (ESPHome, Home Assistant, Meshtastic, eigene KI „Kopf“).',
     `Jetzt: ${now}.`,
     sites && `Standorte: ${sites}.`,
-    withHome && 'Du kannst Home Assistant über Werkzeuge abfragen und steuern. Schalte nur, was der Nutzer ausdrücklich will.',
+    withHome && 'Du kannst Home Assistant, den Unraid-Server (Container, VMs), GitHub-Repos, das Teilelager und das Meshtastic-Netz über Werkzeuge abfragen. Schalte, starte oder stoppe nur, was der Nutzer ausdrücklich will.',
     projectContext(projectId),
   ].filter(Boolean).join('\n\n');
 }
@@ -73,6 +78,30 @@ const TOOLS = [
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'server_status',
+    description: 'Status des Unraid-Servers: CPU, RAM, Array, alle Docker-Container und VMs mit Zustand.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'manage_server',
+    description: 'Startet, stoppt oder startet einen Docker-Container bzw. eine VM auf dem Unraid-Server neu. Nur auf ausdrücklichen Wunsch.',
+    input_schema: {
+      type: 'object',
+      properties: { kind: { type: 'string', enum: ['container', 'vm'] }, name: { type: 'string' }, action: { type: 'string', enum: ['start', 'stop', 'restart'] } },
+      required: ['kind', 'name', 'action'],
+    },
+  },
+  {
+    name: 'repo_info',
+    description: 'Infos zu einem GitHub-Repo des Nutzers: letzte Commits, offene Issues/PRs, Release, Build-Status. Ohne Angabe: Repo des aktuellen Projekts.',
+    input_schema: { type: 'object', properties: { repo: { type: 'string', description: 'z. B. Blauerbarsch/local-ai' } } },
+  },
+  {
+    name: 'parts_search',
+    description: 'Sucht Bauteile im Teilelager (InvenTree) und liefert den Bestand.',
+    input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+  },
+  {
     name: 'add_project_task',
     description: 'Fügt dem aktuellen Projekt eine Aufgabe hinzu.',
     input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
@@ -96,6 +125,28 @@ async function runTool(name, input, projectId) {
         id: n.id, name: n.alias || n.longName, lat: n.lat, lon: n.lon, battery: n.battery,
         temperature: n.temperature, humidity: n.humidity, lastSeen: n.lastSeen && new Date(n.lastSeen).toISOString(),
       }));
+    case 'server_status': {
+      const o = await unraid.overview();
+      return { cpu: o.cpu, mem: o.mem, array: o.array && { state: o.array.state, capacity: o.array.capacity }, containers: o.containers.map((c) => ({ name: c.name, state: c.state, update: c.update })), vms: o.vms };
+    }
+    case 'manage_server': {
+      const o = await unraid.overview(true);
+      const list = input.kind === 'vm' ? o.vms : o.containers;
+      const item = list.find((x) => x.name.toLowerCase() === String(input.name).toLowerCase());
+      if (!item) return { error: `${input.name} nicht gefunden`, available: list.map((x) => x.name) };
+      const action = input.kind === 'vm' && input.action === 'restart' ? 'reboot' : input.action;
+      if (input.kind === 'vm') await unraid.vmAction(item.id, action);
+      else await unraid.containerAction(item.id, action);
+      return { ok: true, name: item.name, action };
+    }
+    case 'repo_info': {
+      const repo = input.repo || projects.get(projectId)?.repo;
+      if (!repo) return { error: 'kein Repo angegeben' };
+      const d = await github.details(repo);
+      return { ...d, readme: d.readme.slice(0, 3000) };
+    }
+    case 'parts_search':
+      return inventreeSearch(input.query);
     case 'add_project_task': {
       const p = projects.get(projectId);
       if (!p) return { error: 'kein Projekt gewählt' };
@@ -114,11 +165,14 @@ async function runTool(name, input, projectId) {
   }
 }
 
+const CONTROL_TOOLS = ['find_entities', 'call_service', 'manage_server'];
+const toolsFor = (withHome) => (withHome ? TOOLS : TOOLS.filter((t) => !CONTROL_TOOLS.includes(t.name)));
+
 // ---------- Claude ----------
 async function chatClaude({ messages, projectId }, emit, signal) {
   const s = settings();
   if (!s.anthropicKey) throw new Error('Kein Anthropic-API-Key eingetragen (Einstellungen)');
-  const withHome = s.aiHomeControl && ha.status === 'connected';
+  const withHome = Boolean(s.aiHomeControl);
   const convo = messages.map((m) => ({ role: m.role, content: m.content }));
 
   for (let round = 0; round < 6; round++) {
@@ -136,7 +190,7 @@ async function chatClaude({ messages, projectId }, emit, signal) {
         stream: true,
         system: systemPrompt(projectId, withHome),
         messages: convo,
-        tools: withHome ? TOOLS : TOOLS.filter((t) => !['find_entities', 'call_service'].includes(t.name)),
+        tools: toolsFor(withHome),
       }),
     });
     if (!res.ok) throw new Error(`Claude: ${res.status} ${(await res.text()).slice(0, 300)}`);
@@ -188,15 +242,48 @@ async function chatClaude({ messages, projectId }, emit, signal) {
 async function chatKopf({ messages, projectId }, emit, signal) {
   const s = settings();
   if (!s.kopfUrl) throw new Error('Kopf-Adresse fehlt (Einstellungen)');
-  const res = await fetch(s.kopfUrl.replace(/\/$/, '') + '/v1/chat/completions', {
+  const url = s.kopfUrl.replace(/\/$/, '') + '/v1/chat/completions';
+  const convo = [{ role: 'system', content: systemPrompt(projectId, s.kopfTools) }, ...messages];
+
+  // Mit Werkzeugen: ohne Streaming, Schleife über tool_calls (OpenAI-Format, Ollama versteht das).
+  if (s.kopfTools) {
+    const tools = toolsFor(Boolean(s.aiHomeControl)).map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+    try {
+      for (let round = 0; round < 5; round++) {
+        const res = await fetch(url, {
+          method: 'POST', signal, headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ model: s.kopfModel || 'head-memory', stream: false, messages: convo, tools }),
+        });
+        if (!res.ok) throw new Error(`Kopf: ${res.status} ${(await res.text()).slice(0, 200)}`);
+        const msg = (await res.json()).choices?.[0]?.message || {};
+        const calls = msg.tool_calls || [];
+        if (!calls.length) {
+          if (msg.content) emit('delta', { text: msg.content });
+          return;
+        }
+        convo.push({ role: 'assistant', content: msg.content || '', tool_calls: calls });
+        for (const c of calls) {
+          let input = {};
+          try { input = typeof c.function.arguments === 'string' ? JSON.parse(c.function.arguments || '{}') : c.function.arguments || {}; } catch {}
+          let result;
+          try { result = await runTool(c.function.name, input, projectId); } catch (e) { result = { error: e.message }; }
+          emit('tool', { name: c.function.name, input, result });
+          convo.push({ role: 'tool', tool_call_id: c.id, name: c.function.name, content: JSON.stringify(result).slice(0, 12000) });
+        }
+      }
+      return;
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      emit('delta', { text: `_(Werkzeuge nicht verfügbar: ${e.message} – antworte ohne)_\n\n` });
+      convo[0] = { role: 'system', content: systemPrompt(projectId, false) };
+    }
+  }
+
+  const res = await fetch(url, {
     method: 'POST',
     signal,
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: s.kopfModel || 'head-memory',
-      stream: true,
-      messages: [{ role: 'system', content: systemPrompt(projectId, false) }, ...messages],
-    }),
+    body: JSON.stringify({ model: s.kopfModel || 'head-memory', stream: true, messages: convo.filter((m) => !m.tool_calls && m.role !== 'tool') }),
   });
   if (!res.ok) throw new Error(`Kopf: ${res.status} ${(await res.text()).slice(0, 300)}`);
   for await (const data of sseLines(res)) {

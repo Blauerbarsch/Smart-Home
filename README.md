@@ -4,20 +4,36 @@ Eigene Smart-Home-Übersicht für Browser, Handy und Linux-Desktop – läuft al
 Docker-Container auf Unraid.
 
 - **Kachel-Dashboard** für Home Assistant und ESPHome: Licht (Helligkeit, Farbe),
-  Schalter, Sensoren mit Verlauf, Klima, Rollos, Medien, Kameras, Szenen, Listen.
-  Kacheln frei verschieben (Maus und Touch), Größe ändern, kopieren, eigene Reiter anlegen.
-- **Standorte**: Karte mit beliebig vielen Orten (Zuhause, Garten, Hütte …), jeweils
-  mit zugeordneten HA-Sensoren und Mesh-Nodes; dazu HA-Zonen und Personen mit GPS.
-- **Meshtastic** über MQTT: Nodes mit Position, Akku, Telemetrie (Temperatur, Feuchte,
-  Luftdruck …), Verlauf, Funkverbindungen zwischen Nodes, Nachrichten lesen und senden.
-- **Werkstatt** im animierten HUD-Stil: Bastelprojekte mit Aufgaben, Stückliste,
-  Notizen (Markdown), Links und verknüpften Sensoren – plus **KI-Konsole** mit
-  Claude (kann Home Assistant steuern und Projektaufgaben anlegen) und deinem
-  lokalen **Kopf** (head-brain, Sprachausgabe über head-output, Kamera über head-vision).
-- **Apps**: andere Dienste (Unraid, Grafana, Frigate …) als Kachel verlinken, im
-  Fenster oder direkt in der Kachel einbetten.
-- Als **App installierbar** (PWA) auf Android, iOS und Linux; ohne Internet nutzbar
-  (Icons und Kartenbibliothek liegen lokal, nur die Kartenkacheln kommen aus dem Netz).
+  Schalter, Sensoren mit Verlauf, Klima, Rollos, Medien, Kameras, Szenen, Listen,
+  JSON-APIs, Dienst-Status, 3D-Drucker (Klipper/Moonraker), GitHub, Alarme.
+  Kacheln verschieben, Größe ändern, kopieren – und **bedingt einblenden**
+  („nur zeigen, wenn Waschmaschine läuft“).
+- **Grundriss**: eigenes Bild hochladen, Geräte darauf platzieren und antippen.
+- **Server**: Unraid 7.2+ über die offizielle API – CPU, RAM, Array, Plattentemperaturen,
+  alle **Docker-Container und VMs** starten/stoppen/neu starten, Container-Updates,
+  Erreichbarkeit deiner Dienste.
+- **Standorte**: Karte mit beliebig vielen Orten, deren HA-Sensoren und Mesh-Nodes,
+  HA-Zonen und Personen.
+- **Meshtastic** über MQTT – versteht das normale Protobuf-Format (auch verschlüsselt,
+  LongFast automatisch, eigene Kanäle mit Schlüssel) und die JSON-Ausgabe. Nodes mit
+  Hardware, Rolle, Firmware, Telemetrie-Verlauf (SQLite), Funkverbindungen auf der Karte,
+  Traceroutes, Nachrichten und Direktnachrichten, **Netz-Analyse** (Pakete, Pakettypen,
+  Hops, Kanalauslastung, Gateways, längste Verbindungen).
+- **Alarme**: Regeln für Mesh-Nodes (offline, Akku, Temperatur …), HA-Werte, Dienste,
+  Container/VMs. Benachrichtigung im Browser, als Push über die Home-Assistant-App,
+  per ntfy oder Kopf spricht sie aus. HA- und Unraid-Meldungen landen in der Glocke.
+- **Werkstatt** im animierten HUD-Stil: Projekte mit Aufgaben, Tagebuch mit Fotos,
+  Stückliste (mit **InvenTree**-Lagerbestand), Notizen, Links, Sensoren, verknüpften
+  Containern/VMs und **ESPHome-Geräten** (YAML bearbeiten, prüfen, kompilieren,
+  OTA-Update, Logs). **Jedes GitHub-Repo wird automatisch ein Projekt** – mit Commits,
+  Issues/PRs, Release, Build-Status und README.
+- **KI-Konsole**: Claude und dein lokaler **Kopf** – beide mit Werkzeugen für Home
+  Assistant, Unraid (Container/VMs), GitHub, Mesh, Teilelager und Projekte.
+- **Geräteprofile & Wandtablet**: Reiter nur auf Handy/Tablet/PC/Wand zeigen,
+  Wandtablet-Modus mit Bildschirmschoner, Nachtdimmung, Bildschirm bleibt an.
+- **Update-Knopf**: zeigt neue Versionen an und aktualisiert den Container über die
+  Unraid-API.
+- Als **App installierbar** (PWA) auf Android, iOS und Linux.
 
 Keine externen Node-Abhängigkeiten: Server und Oberfläche laufen mit Node 22 pur.
 
@@ -45,13 +61,37 @@ cd /mnt/user/appdata/smart-home-src && docker compose up -d --build
 Alle Einstellungen lassen sich in der Oberfläche setzen. Umgebungsvariablen haben
 Vorrang und sperren das jeweilige Feld: `APP_PASSWORD`, `HA_URL`, `HA_TOKEN`,
 `ANTHROPIC_API_KEY`, `CLAUDE_MODEL`, `KOPF_URL`, `KOPF_OUTPUT_URL`, `KOPF_VISION_URL`,
-`ESPHOME_URL`, `MQTT_URL`, `MQTT_USER`, `MQTT_PASSWORD`, `MESH_TOPIC`, `PUID`/`PGID`
+`ESPHOME_URL`, `MQTT_URL`, `MQTT_USER`, `MQTT_PASSWORD`, `MESH_TOPIC`, `MESH_KEYS`,
+`UNRAID_URL`, `UNRAID_API_KEY`, `GITHUB_USER`, `GITHUB_TOKEN`, `INVENTREE_URL`,
+`INVENTREE_TOKEN`, `NTFY_URL`, `PUID`/`PGID`
 (Standard 99/100), `TZ`.
 
 Daten liegen in `/data` (appdata): `config.json` (Einstellungen, Reiter, Kacheln,
-Standorte), `projects.json`, `mesh.json` (Nodes und Verlauf), `sessions.json`.
+Standorte), `projects.json`, `history.db` (SQLite: Mesh-Verlauf, Alarme, Tagebuch),
+`mesh.json` (Node-Zustand), `github.json`, `alerts.json`, `uploads/` (Fotos, Grundrisse).
 
 ## Verbindungen einrichten
+
+### Unraid (Server-Reiter, Update-Knopf)
+Unraid 7.2+: *Settings → Management Access → API Keys → Create*, Rolle **ADMIN**
+(oder Lesen/Schreiben für Docker, VMs, Array, Info, Notifications). Im Dashboard unter
+Einstellungen → Unraid die Adresse (`http://192.168.188.175`) und den Schlüssel eintragen.
+Danach erscheinen Container und VMs im Reiter „Server“ und können Projekten zugeordnet
+werden (z. B. Minecraft → VM „Linux“). Der Update-Knopf oben rechts erscheint, sobald
+auf GitHub eine neuere Version liegt.
+
+### GitHub
+Benutzer ist voreingestellt (`Blauerbarsch`). Öffentliche Repos klappen ohne Token; für
+private ein *Fine-grained token* mit Lesezugriff auf Contents, Metadata, Issues und
+Actions eintragen. Neue Repos werden alle 30 Minuten automatisch als Projekt angelegt.
+Ein gelöschtes Repo-Projekt wird nicht wieder angelegt.
+
+### Benachrichtigungen
+- **Home-Assistant-App**: Dienstname eintragen, z. B. `notify.mobile_app_pixel_8`.
+- **ntfy** (optional): `https://ntfy.sh/dein-geheimes-thema` oder eigener Server.
+- Im Browser: Glocke → „Im Browser erlauben“.
+Regeln stellst du unter Einstellungen → Alarm-Regeln ein; zwei sind voreingestellt
+(Mesh-Node 2 h offline, Mesh-Akku unter 20 %).
 
 ### Home Assistant
 Profil → Sicherheit → *Langlebiges Zugangstoken* erstellen und mit der Adresse
@@ -64,14 +104,13 @@ kommen wie gewohnt über Home Assistant.
 
 ### Meshtastic
 1. MQTT-Broker bereitstellen (z. B. Mosquitto aus den Unraid-Community-Apps).
-2. Auf einem Node mit WLAN/Ethernet (Gateway): *Module → MQTT* aktivieren,
-   Broker-Adresse eintragen, **JSON output** einschalten.
-3. Im genutzten Kanal **Uplink** aktivieren (zum Senden zusätzlich **Downlink**).
-4. Im Dashboard unter Einstellungen den Broker eintragen. Zum Senden die Node-ID
-   des Gateways (`!a1b2c3d4`) angeben.
-
-Hinweis: Die JSON-Ausgabe gibt es nur auf ESP32-Geräten. Hängen deine Nodes an
-nRF52-Gateways (RAK, T-Echo), nimm ein ESP32-Gerät als MQTT-Gateway.
+2. Auf einem Node mit WLAN/Ethernet (Gateway): *Module → MQTT* aktivieren und die
+   Broker-Adresse eintragen. Im genutzten Kanal **Uplink** aktivieren.
+3. Im Dashboard unter Einstellungen den Broker eintragen. Fertig – das normale
+   (verschlüsselte) Format wird direkt gelesen. Eigene Kanäle mit eigenem Schlüssel
+   unter „Kanal-Schlüssel“ eintragen (`Name=Base64-Schlüssel`).
+4. Zum **Senden** braucht es zusätzlich *JSON output* im MQTT-Modul (nur ESP32),
+   **Downlink** im Kanal und die Node-ID des Gateways (`!a1b2c3d4`) in den Einstellungen.
 
 Nodes, deren Position im Radius eines Standorts liegt, werden diesem automatisch
 zugeordnet; feste Zuordnung geht im Standort-Editor.
@@ -88,12 +127,16 @@ Die Werkstatt spricht mit `head-brain` über dessen OpenAI-kompatible API
 Kamerabilder von `head-vision` (`/snapshot.jpg`) und lässt über `head-output`
 (`/speak`) vorlesen.
 
-**Wichtig:** In `local-ai/quadlet/*.container` sind die Ports nur an `127.0.0.1`
-gebunden. Damit der Unraid-Server sie erreicht, z. B. in `head-brain.container`
-`PublishPort=127.0.0.1:8100:8000` durch `PublishPort=8100:8000` ersetzen (ebenso für
-head-output 8600 und head-vision 8400), danach `kopf-install` und Dienste neu starten.
-Sicherer als die Freigabe im ganzen LAN: beide Geräte ins Tailnet (Tailscale) und
-die Tailscale-IP des PCs eintragen.
+Die Ports sind im `local-ai`-Repo bereits freigegeben. Auf dem PC einmal:
+
+```bash
+cd ~/.config/local-ai && git pull && kopf-install
+systemctl --user restart head-brain head-output head-vision
+kopf-lan 192.168.188.175     # nur der Unraid-Server darf zugreifen (firewalld)
+```
+
+Mit „Kopf bekommt Werkzeuge“ kann Kopf im Dashboard auch Licht schalten, nach dem
+Server sehen oder Projektaufgaben anlegen (Ollama-Tool-Calls über head-brain).
 
 ## Als App nutzen
 
@@ -119,6 +162,12 @@ npm run dev          # mit Neustart bei Änderungen
 | Pfad | Inhalt |
 |---|---|
 | `server/server.js` | HTTP-Server, Routen, Live-Ereignisse (SSE), Login |
+| `server/db.js` | SQLite (Mesh-Verlauf, Pakete, Alarme, Dienst-Checks, Tagebuch) |
+| `server/meshproto.js` | Meshtastic-Protobuf + AES-Entschlüsselung ohne Abhängigkeiten |
+| `server/unraid.js` | Unraid-GraphQL-API (Container, VMs, Array, Update) |
+| `server/github.js` | Repo-Abgleich, Auto-Projekte, Repo-Details, Update-Prüfung |
+| `server/alerts.js`, `services.js` | Alarm-Regeln, Benachrichtigungen, Dienst-Checks |
+| `server/maker.js` | Uploads, Tagebuch, InvenTree, ESPHome, Moonraker |
 | `server/ha.js` | WebSocket-Verbindung zu Home Assistant |
 | `server/mqtt.js`, `server/mesh.js` | MQTT-Client und Meshtastic-Auswertung |
 | `server/ai.js` | Claude (mit Werkzeugen) und Kopf |

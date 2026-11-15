@@ -165,9 +165,12 @@ function renderEntity(tile, el) {
   el.append(head(ic, name, ago(Date.parse(st.last_changed))),
     h('div', { class: 'tile-body' }, h('div', { class: 'tile-value', style: numeric ? null : { fontSize: '22px' } }, val, numeric && a.unit_of_measurement ? h('small', {}, a.unit_of_measurement) : null)));
   if (showGraph) {
-    const box = h('div', {});
-    el.querySelector('.tile-body').prepend(box);
-    history(st.entity_id, tile.hours || 24).then((pts) => box.replaceChildren(sparkline([...pts, [Date.now(), st.state]], { height: Math.max(30, tile.h * 50 - 70) })));
+    // Bei einer Zeile Höhe liegt der Verlauf dezent hinter dem Wert, sonst darüber
+    const flat = tile.h < 2;
+    const box = h('div', { class: flat ? 'spark-bg' : '' });
+    if (flat) el.append(box);
+    else el.querySelector('.tile-body').prepend(box);
+    history(st.entity_id, tile.hours || 24).then((pts) => box.replaceChildren(sparkline([...pts, [Date.now(), st.state]], { height: flat ? 40 : Math.max(30, tile.h * 50 - 70) })));
   }
 }
 
@@ -263,6 +266,7 @@ export const TILE_TYPES = {
       { key: 'url', label: 'Adresse', kind: 'text' },
       { key: 'icon', label: 'Icon (mdi-Name)', kind: 'text', hint: 'z. B. server, chart-line, cctv, home-assistant, docker' },
       { key: 'mode', label: 'Öffnen als', kind: 'select', options: [['link', 'Neuer Tab'], ['modal', 'Fenster im Dashboard'], ['inline', 'Direkt in der Kachel']] },
+      { key: 'check', label: 'Erreichbarkeit prüfen', kind: 'select', options: [['', 'Nein'], ['true', 'Ja (Punkt + Alarm möglich)']] },
       { key: 'color', label: 'Farbe', kind: 'color' },
     ],
     render(tile, el) {
@@ -271,7 +275,9 @@ export const TILE_TYPES = {
         return;
       }
       el.classList.add('clickable', 'on');
-      el.append(head(tile.icon, tile.title, tile.url.replace(/^https?:\/\//, '')));
+      const sv = tile.check && S.services?.[tile.url];
+      el.append(head(tile.icon, tile.title, tile.url.replace(/^https?:\/\//, ''),
+        sv ? h('span', { class: 'fresh', title: sv.ok ? `erreichbar (${sv.ms} ms)` : 'nicht erreichbar', style: { background: sv.ok ? 'var(--ok)' : 'var(--bad)' } }) : null));
       el.addEventListener('click', () => {
         if (S.editing) return;
         if (tile.mode === 'modal') {
@@ -396,6 +402,151 @@ export const TILE_TYPES = {
       el.append(h('iframe', { src: tile.url, loading: 'lazy' }));
     },
   },
+  server: {
+    label: 'Unraid-Server', icon: 'server', desc: 'CPU, RAM, Array, laufende Container und VMs',
+    defaults: { w: 2, h: 1 },
+    deps: () => ['unraid'],
+    fields: [{ key: 'title', label: 'Titel', kind: 'text' }],
+    render(tile, el) {
+      el.classList.add('clickable');
+      el.addEventListener('click', () => !S.editing && (location.hash = '#server'));
+      const u = S.unraid;
+      if (!u) {
+        el.append(head('server', tile.title || 'Server', S.settings.unraidUrl ? 'Lade …' : 'Unraid-API in den Einstellungen eintragen'));
+        return;
+      }
+      const run = (l) => l.filter((x) => ['RUNNING', 'IDLE'].includes(String(x.state).toUpperCase())).length;
+      const cap = u.array?.capacity ? Math.round((Number(u.array.capacity.used) / Number(u.array.capacity.total)) * 100) : null;
+      const upd = u.containers.filter((c) => c.update).length;
+      const info = `${run(u.containers)}/${u.containers.length} Container · ${run(u.vms)}/${u.vms.length} VMs${upd ? ` · ${upd} Updates` : ''}`;
+      if (tile.h < 2) {
+        el.append(head('server', tile.title || u.hostname || 'Server', info),
+          h('div', { class: 'tile-body' }, h('div', { class: 'mini-nums' },
+            h('span', {}, 'CPU ', h('b', {}, Math.round(u.cpu || 0) + ' %')), h('span', {}, 'RAM ', h('b', {}, Math.round(u.mem?.pct || 0) + ' %')), cap != null ? h('span', {}, 'Array ', h('b', {}, cap + ' %')) : null)));
+        return;
+      }
+      el.append(head('server', tile.title || u.hostname || 'Server', info),
+        h('div', { class: 'tile-body' }, h('div', { class: 'mini-bars' },
+          miniBar('CPU', u.cpu), miniBar('RAM', u.mem?.pct), cap != null ? miniBar('Array', cap) : null)));
+    },
+  },
+  resource: {
+    label: 'Container / VM', icon: 'docker', desc: 'Einzelnen Container oder eine VM schalten (z. B. Minecraft-VM)',
+    defaults: { w: 1, h: 1, kind: 'container' },
+    deps: () => ['unraid'],
+    fields: [{ key: 'kind', label: 'Art', kind: 'select', options: [['container', 'Docker-Container'], ['vm', 'VM']] }, { key: 'name', label: 'Name', kind: 'resource' }, { key: 'title', label: 'Eigener Name', kind: 'text' }],
+    render(tile, el) {
+      const list = tile.kind === 'vm' ? S.unraid?.vms : S.unraid?.containers;
+      const item = list?.find((x) => x.name === tile.name);
+      const ic = tile.kind === 'vm' ? 'monitor' : 'docker';
+      if (!item) return el.append(head(ic, tile.title || tile.name || 'Container/VM', !tile.name ? 'Bearbeiten → Name wählen' : S.unraid ? 'nicht gefunden' : 'Lade …'));
+      const onState = ['RUNNING', 'IDLE'].includes(String(item.state).toUpperCase());
+      if (onState) el.classList.add('on');
+      el.classList.add('clickable');
+      el.addEventListener('click', async () => {
+        if (S.editing) return;
+        const { act } = await import('./server.js');
+        if (await act(tile.kind, item, onState ? 'stop' : 'start', onState ? `${item.name} stoppen?` : null)) setTimeout(() => emitUnraidRefresh(), 1500);
+      });
+      el.append(head(ic, tile.title || item.name, onState ? 'läuft' : 'aus', h('span', { class: 'toggle' + (onState ? ' on' : '') })));
+    },
+  },
+  service: {
+    label: 'Dienst-Status', icon: 'lan-check', desc: 'Ist eine Webseite/ein Dienst erreichbar? Mit Verfügbarkeit (24 h)',
+    defaults: { w: 1, h: 1, url: 'http://' },
+    deps: () => ['services'],
+    fields: [{ key: 'title', label: 'Name', kind: 'text' }, { key: 'url', label: 'Adresse', kind: 'text' }, { key: 'icon', label: 'Icon (mdi)', kind: 'text' }],
+    render(tile, el) {
+      const sv = S.services?.[tile.url];
+      if (sv?.ok) el.classList.add('on');
+      el.style.setProperty('--tc-rgb', sv && !sv.ok ? '255, 93, 108' : null);
+      el.append(head(tile.icon || 'lan-check', tile.title || tile.url, !sv ? 'wird geprüft …' : sv.ok ? `erreichbar · ${sv.ms} ms` : `nicht erreichbar${sv.error ? ' · ' + sv.error : ''}`),
+        tile.h > 1 || tile.w > 1 ? h('div', { class: 'tile-body' }, h('div', { class: 'tile-sub' }, sv?.uptime24h != null ? `Verfügbarkeit 24 h: ${sv.uptime24h} %` : '')) : null);
+    },
+  },
+  json: {
+    label: 'JSON-API', icon: 'code-json', desc: 'Beliebigen Wert aus einer JSON-Schnittstelle anzeigen (Pi-hole, Plex, eigene APIs …)',
+    defaults: { w: 1, h: 1, url: 'http://', path: '', refresh: 60 },
+    fields: [
+      { key: 'title', label: 'Titel', kind: 'text' }, { key: 'url', label: 'Adresse', kind: 'text' },
+      { key: 'path', label: 'Pfad zum Wert', kind: 'text', hint: 'z. B. data.temperature oder items.0.name – mehrere mit Komma' },
+      { key: 'unit', label: 'Einheit', kind: 'text' }, { key: 'icon', label: 'Icon (mdi)', kind: 'text' },
+      { key: 'headers', label: 'Header (optional)', kind: 'textarea', hint: 'Eine Zeile pro Header, z. B. Authorization: Bearer abc' },
+      { key: 'refresh', label: 'Aktualisieren (Sekunden)', kind: 'number' },
+    ],
+    render(tile, el) {
+      const val = h('div', { class: 'tile-value', style: { fontSize: '24px' } }, '…');
+      el.append(head(tile.icon || 'code-json', tile.title || 'JSON'), h('div', { class: 'tile-body' }, val));
+      const load = () => api('/tile-json/' + tile.id).then((data) => {
+        const paths = String(tile.path || '').split(',').map((x) => x.trim()).filter(Boolean);
+        const get = (p) => p.split('.').reduce((o, k) => (o == null ? o : o[k]), data);
+        const vals = paths.length ? paths.map(get) : [data];
+        val.replaceChildren(...vals.map((v, i) => h('div', { style: i ? { fontSize: '14px', color: 'var(--muted)' } : null },
+          typeof v === 'object' ? JSON.stringify(v).slice(0, 80) : String(v ?? '–'), i === 0 && tile.unit ? h('small', {}, tile.unit) : null)));
+      }).catch((e) => { val.textContent = '⚠'; val.title = e.message; });
+      load();
+      const iv = setInterval(() => (el.isConnected ? load() : clearInterval(iv)), Math.max(10, tile.refresh || 60) * 1000);
+    },
+  },
+  printer: {
+    label: '3D-Drucker', icon: 'printer-3d-nozzle', desc: 'Klipper/Moonraker: Fortschritt, Temperaturen, Kamera',
+    defaults: { w: 2, h: 2, url: 'http://' },
+    fields: [{ key: 'title', label: 'Name', kind: 'text' }, { key: 'url', label: 'Moonraker-Adresse', kind: 'text', hint: 'z. B. http://192.168.188.50:7125' },
+      { key: 'camera', label: 'Kamera-Snapshot-URL (optional)', kind: 'text' }, { key: 'apiKey', label: 'API-Key (optional)', kind: 'text' }],
+    render(tile, el) {
+      const sub = h('span', {}, 'Lade …');
+      const body = h('div', { class: 'tile-body' });
+      el.append(head('printer-3d-nozzle', tile.title || '3D-Drucker', sub), body);
+      const STATES = { printing: 'druckt', standby: 'bereit', paused: 'pausiert', complete: 'fertig', cancelled: 'abgebrochen', error: 'Fehler' };
+      const load = () => api('/printer/' + tile.id).then((p) => {
+        const pct = Math.round((p.progress || 0) * 100);
+        sub.textContent = `${STATES[p.state] || p.state}${p.state === 'printing' ? ` · ${pct} %` : ''}`;
+        el.classList.toggle('on', p.state === 'printing');
+        const rem = p.remaining ? `${Math.floor(p.remaining / 3600)} h ${Math.round((p.remaining % 3600) / 60)} min` : '';
+        body.replaceChildren(
+          tile.h > 1 ? h('img', { class: 'cam', src: `/api/printer/${tile.id}/snapshot?t=${Date.now()}`, onerror: (e) => e.target.remove() }) : null,
+          p.state === 'printing' ? h('div', { class: 'bar-mini' }, h('div', { style: { width: pct + '%' } })) : null,
+          h('div', { class: 'tile-sub' }, [p.file, rem && `noch ${rem}`].filter(Boolean).join(' · ')),
+          h('div', { class: 'tile-row', style: { fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--muted)' } },
+            `Düse ${p.extruder.temp?.toFixed(0) ?? '–'}/${p.extruder.target?.toFixed(0) ?? '–'} °C · Bett ${p.bed.temp?.toFixed(0) ?? '–'}/${p.bed.target?.toFixed(0) ?? '–'} °C`));
+      }).catch((e) => { sub.textContent = e.message; });
+      load();
+      const iv = setInterval(() => (el.isConnected ? load() : clearInterval(iv)), 15000);
+    },
+  },
+  github: {
+    label: 'GitHub', icon: 'github', desc: 'Deine Repos: letzte Änderungen, offene Issues, Projekt dazu',
+    defaults: { w: 2, h: 2 },
+    deps: () => ['projects'],
+    fields: [{ key: 'title', label: 'Titel', kind: 'text' }, { key: 'limit', label: 'Anzahl', kind: 'number' }],
+    render(tile, el) {
+      const list = h('div', { class: 'list', style: { marginTop: '10px' } }, h('div', { class: 'empty' }, 'Lade …'));
+      el.append(head('github', tile.title || 'GitHub'), list);
+      api('/github/repos').then(({ repos, error }) => {
+        if (!repos.length) return list.replaceChildren(h('div', { class: 'empty' }, error || 'GitHub-Benutzer in den Einstellungen eintragen'));
+        list.replaceChildren(...repos.slice(0, tile.limit || 12).map((r) => {
+          const p = S.projects.find((x) => x.repo?.toLowerCase() === r.full_name.toLowerCase());
+          return h('a', { class: 'list-item', href: p ? `#workshop/${p.id}` : r.html_url, target: p ? null : '_blank', style: { color: 'inherit', textDecoration: 'none' }, onclick: (e) => e.stopPropagation() },
+            icon(r.private ? 'lock-outline' : 'source-repository'), h('span', { class: 'grow' }, p?.name || r.name),
+            r.open_issues ? h('span', { class: 'chip' }, r.open_issues) : null, h('span', { class: 'val' }, ago(Date.parse(r.pushed_at))));
+        }));
+      }).catch((e) => list.replaceChildren(h('div', { class: 'empty' }, e.message)));
+    },
+  },
+  alerts: {
+    label: 'Alarme', icon: 'bell-alert-outline', desc: 'Aktive Alarme und letzte Meldungen',
+    defaults: { w: 2, h: 2 },
+    deps: () => ['alerts'],
+    fields: [{ key: 'title', label: 'Titel', kind: 'text' }],
+    render(tile, el) {
+      const list = h('div', { class: 'list', style: { marginTop: '10px' } });
+      el.append(head('bell-alert-outline', tile.title || 'Alarme', S.activeAlerts?.length ? `${S.activeAlerts.length} aktiv` : 'alles ruhig'), list);
+      if (S.activeAlerts?.length) el.style.setProperty('--tc-rgb', '255, 181, 71'), el.classList.add('on');
+      api('/alerts').then((a) => list.replaceChildren(...(a.history.length ? a.history.slice(0, 15).map((x) => h('div', { class: 'list-item' },
+        icon(x.level === 'ok' ? 'check-circle-outline' : 'alert-outline'), h('span', { class: 'grow', title: x.text }, x.title), h('span', { class: 'val' }, ago(x.ts))))
+        : [h('div', { class: 'empty' }, 'Noch keine Meldungen')])));
+    },
+  },
   esphome: {
     label: 'ESPHome-Geräte', icon: 'chip', desc: 'Geräte aus deinem ESPHome-Dashboard',
     defaults: { w: 2, h: 2 },
@@ -406,15 +557,21 @@ export const TILE_TYPES = {
         S.settings.esphomeUrl ? h('a', { class: 'btn icon sm', href: S.settings.esphomeUrl, target: '_blank', onclick: (e) => e.stopPropagation() }, icon('open-in-new')) : null), list);
       api('/esphome/devices').then((d) => {
         const devs = d.configured || [];
-        list.replaceChildren(...(devs.length ? devs.map((x) => {
-          const st = [...S.states.values()].find((s) => s.entity_id.startsWith('binary_sensor.') && s.entity_id.includes(x.name.replace(/-/g, '_')) && s.attributes.device_class === 'connectivity');
-          return h('div', { class: 'list-item' }, icon('chip'), h('span', { class: 'grow' }, x.friendly_name || x.name),
-            h('span', { class: 'val' }, x.deployed_version || x.current_version || ''), st ? h('span', { class: 'fresh', style: { background: st.state === 'on' ? 'var(--ok)' : 'var(--bad)' } }) : null);
-        }) : [h('div', { class: 'empty' }, 'Keine Geräte gefunden')]));
+        list.replaceChildren(...(devs.length ? devs.map((x) => h('div', { class: 'list-item' }, icon('chip'), h('span', { class: 'grow' }, x.friendly),
+          x.outdated ? h('span', { class: 'chip warn', title: `installiert ${x.deployed}, aktuell ${x.current}` }, 'Update') : h('span', { class: 'val' }, x.deployed || ''),
+          h('span', { class: 'fresh', title: x.online ? 'online' : 'offline', style: { background: x.online ? 'var(--ok)' : x.online === false ? 'var(--bad)' : 'var(--muted)' } })))
+          : [h('div', { class: 'empty' }, 'Keine Geräte gefunden')]));
       }).catch((e) => list.replaceChildren(h('div', { class: 'empty' }, e.message)));
     },
   },
 };
+
+function miniBar(label, pct) {
+  const v = Math.round(pct || 0);
+  const c = v >= 90 ? 'var(--bad)' : v >= 75 ? 'var(--warn)' : 'var(--accent)';
+  return h('div', { class: 'mini-bar' }, h('span', {}, label), h('div', { class: 'bar-mini' }, h('div', { style: { width: v + '%', background: c } })), h('b', {}, v + ' %'));
+}
+const emitUnraidRefresh = () => import('./core.js').then((m) => m.emit('unraid-refresh'));
 
 /** Sensorliste eines Standorts (HA-Entitäten + Mesh-Nodes). */
 export function siteList(s) {
@@ -444,10 +601,20 @@ export function distance(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+const OPS = { '=': (a, b) => String(a) === String(b), '!=': (a, b) => String(a) !== String(b), '>': (a, b) => Number(a) > Number(b), '<': (a, b) => Number(a) < Number(b) };
+/** Bedingung erfüllt? (z. B. „nur zeigen, wenn Waschmaschine = on“) */
+export function conditionMet(tile) {
+  if (!tile.condEntity) return true;
+  const st = ent(tile.condEntity);
+  if (!st) return false;
+  return (OPS[tile.condOp || '='] || OPS['='])(st.state, tile.condValue ?? 'on');
+}
+
 export function renderTile(tile) {
   const type = TILE_TYPES[tile.type] || TILE_TYPES.note;
   const el = h('div', { class: `tile size-${tile.w}x${tile.h}`, 'data-id': tile.id, 'data-w': tile.w, style: { '--w': tile.w, '--h': tile.h } });
   if (tile.color) el.style.setProperty('--tc-rgb', hexToRgb(tile.color));
+  if (!conditionMet(tile)) el.classList.add(S.editing ? 'cond-off' : 'cond-hidden');
   try {
     type.render(tile, el);
   } catch (e) {
@@ -458,5 +625,5 @@ export function renderTile(tile) {
 }
 
 export function tileDeps(tile) {
-  return TILE_TYPES[tile.type]?.deps?.(tile) || [];
+  return [...(TILE_TYPES[tile.type]?.deps?.(tile) || []), ...(tile.condEntity ? [tile.condEntity] : [])];
 }

@@ -18,7 +18,7 @@ const METRIC_LABELS = { temperature: ['Temperatur', '°C'], humidity: ['Feuchte'
   voltage: ['Spannung', 'V'], chUtil: ['Kanal', '%'], airUtil: ['Airtime', '%'], iaq: ['IAQ', ''], lux: ['Licht', 'lx'], windSpeed: ['Wind', 'm/s'], pm25: ['PM2.5', 'µg'] };
 
 export function renderMap(view, actions) {
-  let L, map, layers, pickMode = null, panel = S.mapPanel || 'sites';
+  let L, map, layers, pickMode = null, panel = S.mapPanel || 'sites', dmTo = 'all', anaHours = 24;
   const offs = [];
   const mapEl = h('div', { id: 'map', class: 'dark-tiles' });
   const side = h('div', { class: 'map-side' });
@@ -94,14 +94,19 @@ export function renderMap(view, actions) {
         .addTo(layers.mesh).bindPopup(() => nodePopup(n.id));
       nodeMarkers.set(n.id, m);
     }
-    for (const n of S.mesh.nodes.values()) {
-      for (const nb of n.neighbors || []) {
-        const o = S.mesh.nodes.get(nb.id);
-        if (!n.lat || !o?.lat || n.id > nb.id) continue;
-        const col = nb.snr > 5 ? '#3ddc97' : nb.snr > -5 ? '#ffb547' : '#ff5d6c';
-        L.polyline([[n.lat, n.lon], [o.lat, o.lon]], { color: col, weight: 1.5, opacity: 0.7, dashArray: '6 6' }).addTo(layers.links).bindTooltip(`SNR ${nb.snr} dB`);
+    api('/mesh/links?days=3').then((links) => {
+      layers.links.clearLayers();
+      const best = new Map();
+      for (const l of links) { const k = l.a + l.b; if (!best.has(k) || (l.snr ?? -99) > (best.get(k).snr ?? -99)) best.set(k, l); }
+      for (const l of best.values()) {
+        const A = S.mesh.nodes.get(l.a), B = S.mesh.nodes.get(l.b);
+        if (!A?.lat || !B?.lat) continue;
+        const col = l.snr == null ? '#8193a8' : l.snr > 5 ? '#3ddc97' : l.snr > -5 ? '#ffb547' : '#ff5d6c';
+        const km = (distKm(A.lat, A.lon, B.lat, B.lon)).toFixed(1);
+        L.polyline([[A.lat, A.lon], [B.lat, B.lon]], { color: col, weight: 2, opacity: 0.75, dashArray: l.source === 'trace' ? '2 6' : '6 6' })
+          .addTo(layers.links).bindTooltip(`${nodeName(A)} ↔ ${nodeName(B)} · ${km} km${l.snr != null ? ` · SNR ${l.snr} dB` : ''} · ${({ neighbor: 'Nachbar-Info', heard: 'direkt gehört', trace: 'Traceroute' })[l.source] || l.source}`);
       }
-    }
+    }).catch(() => {});
   }
 
   function fitAll() {
@@ -120,14 +125,15 @@ export function renderMap(view, actions) {
 
   function nodePopup(id) {
     const n = S.mesh.nodes.get(id);
-    return h('div', {}, h('b', {}, nodeName(n)), h('div', { class: 'tile-sub' }, `${n.id}${n.shortName ? ' · ' + n.shortName : ''} · ${ago(n.lastSeen)}`),
+    return h('div', {}, h('b', {}, nodeName(n)), h('div', { class: 'tile-sub' }, [n.id, n.shortName, n.hwName, n.role, ago(n.lastSeen)].filter(Boolean).join(' · ')),
       h('div', { class: 'node-card', style: { padding: 0, background: 'none', border: 0 } }, h('div', { class: 'meta' }, nodeMeta(n))),
-      h('div', { class: 'tile-row', style: { marginTop: '8px' } }, h('button', { class: 'btn sm', onclick: () => nodeDetail(id) }, icon('chart-line'), 'Details')));
+      h('div', { class: 'tile-row', style: { marginTop: '8px' } }, h('button', { class: 'btn sm', onclick: () => nodeDetail(id) }, icon('chart-line'), 'Details'),
+        h('button', { class: 'btn sm', onclick: () => { dmTo = id; panel = S.mapPanel = 'msgs'; drawSide(); } }, icon('message-text-outline'), 'Nachricht')));
   }
 
   async function nodeDetail(id) {
     const n = S.mesh.nodes.get(id);
-    const hist = await api(`/mesh/history/${encodeURIComponent(id)}`).catch(() => ({}));
+    const hist = await api(`/mesh/history/${encodeURIComponent(id)}?days=7`).catch(() => ({}));
     const charts = h('div', { class: 'charts' }, Object.entries(hist).filter(([k, v]) => k !== 'track' && v.length > 1).map(([k, v]) => {
       const [label, unit] = METRIC_LABELS[k] || [k, ''];
       return h('div', { class: 'chart-box' }, h('div', { class: 'lbl' }, label, h('b', {}, `${Math.round(v.at(-1)[1] * 10) / 10} ${unit}`)), sparkline(v, { height: 50 }));
@@ -135,7 +141,7 @@ export function renderMap(view, actions) {
     const alias = h('input', { class: 'input', value: n.alias || '', placeholder: n.longName || '' });
     const track = hist.track?.length > 1;
     modal([icon('radio-tower'), nodeName(n)], h('div', {},
-      h('div', { class: 'tile-sub', style: { marginBottom: '10px' } }, [n.id, n.hw !== undefined && `HW ${n.hw}`, n.via && `über ${n.via}`, `zuletzt ${ago(n.lastSeen)}`, n.lat && `${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}`, n.alt !== undefined && `${n.alt} m`].filter(Boolean).join(' · ')),
+      h('div', { class: 'tile-sub', style: { marginBottom: '10px' } }, [n.id, n.hwName || (n.hw !== undefined && `HW ${n.hw}`), n.role, n.firmware && `FW ${n.firmware}`, n.source === 'mqtt' ? 'über MQTT' : 'per Funk', n.via && `Gateway ${nodeName(S.mesh.nodes.get(n.via)) || n.via}`, `zuletzt ${ago(n.lastSeen)}`, n.lat && `${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}`, n.alt !== undefined && `${n.alt} m`].filter(Boolean).join(' · ')),
       field('Eigener Name', alias),
       h('div', { class: 'node-card', style: { background: 'none', border: 0, padding: 0 } }, h('div', { class: 'meta' }, nodeMeta(n))),
       charts.children.length ? charts : h('div', { class: 'empty' }, 'Noch kein Verlauf – kommt mit der nächsten Telemetrie.')), {
@@ -203,6 +209,47 @@ export function renderMap(view, actions) {
     function reopen() { editSite(Object.assign(orig ? structuredClone(orig) : {}, s)); }
   }
 
+  // ---------- Netz-Analyse ----------
+  async function drawAnalysis(body) {
+    body.append(h('div', { class: 'empty' }, 'Lade Statistik …'));
+    let a;
+    try { a = await api('/mesh/analysis?hours=' + anaHours); } catch (e) { return body.replaceChildren(h('div', { class: 'empty' }, e.message)); }
+    const nn = (id) => nodeName(S.mesh.nodes.get(id)) || id;
+    const barList = (entries, fmt = (v) => v) => {
+      const max = Math.max(1, ...entries.map(([, v]) => v));
+      return h('div', { class: 'ana-bars' }, entries.map(([k, v]) => h('div', { class: 'ana-bar' }, h('span', {}, k), h('div', { class: 'bar-mini' }, h('div', { style: { width: (v / max) * 100 + '%' } })), h('b', {}, fmt(v)))));
+    };
+    const rf = a.source.rf || 0, mq = a.source.mqtt || 0;
+    body.replaceChildren(
+      seg([[24, '24 h'], [168, '7 Tage'], [720, '30 Tage']], anaHours, (v) => { anaHours = v; drawSide(); }),
+      h('div', { class: 'ana-kpis' },
+        kpi('Pakete', a.total), kpi('Aktive Nodes', `${a.active}/${a.nodes}`),
+        kpi('per Funk empfangen', `${rf ? Math.round((rf / (rf + mq)) * 100) : 0} %`), kpi('Entschlüsselt', a.counters.packets ? `${Math.round(((a.counters.decoded + a.counters.json) / a.counters.packets) * 100)} %` : '–')),
+      a.perTime.length > 1 ? h('div', { class: 'site-card' }, h('h4', {}, 'Pakete pro ' + (anaHours <= 24 ? 'Stunde' : '6 Stunden')), sparkline(a.perTime, { height: 60 })) : null,
+      h('div', { class: 'site-card' }, h('h4', {}, 'Pakettypen'), barList(Object.entries(a.byPort).map(([k, v]) => [PORT_DE[k] || k, v]))),
+      Object.keys(a.hops).length ? h('div', { class: 'site-card' }, h('h4', {}, 'Hops bis zum Gateway'), barList(Object.entries(a.hops).map(([k, v]) => [k === '0' ? 'direkt' : k + ' Hop' + (k === '1' ? '' : 's'), v]))) : null,
+      a.chUtil.length ? h('div', { class: 'site-card' }, h('h4', {}, 'Kanalauslastung (Ø / max)'), barList(a.chUtil.map((c) => [nn(c.node), c.avg]), (v) => v.toFixed(1) + ' %')) : null,
+      a.byNode.length ? h('div', { class: 'site-card' }, h('h4', {}, 'Gesprächigste Nodes'), barList(a.byNode.map((x) => [nn(x.node), x.n]))) : null,
+      a.gateways.length ? h('div', { class: 'site-card' }, h('h4', {}, 'Gateways'), barList(a.gateways.map((g) => [nn(g.gateway), g.n]))) : null,
+      a.longestLinks.length ? h('div', { class: 'site-card' }, h('h4', {}, 'Längste Verbindungen'), h('div', { class: 'list' }, a.longestLinks.map((l) => h('div', { class: 'list-item', style: { cursor: 'pointer' }, onclick: () => {
+        const A = S.mesh.nodes.get(l.a), B = S.mesh.nodes.get(l.b);
+        if (A?.lat && B?.lat) map.fitBounds([[A.lat, A.lon], [B.lat, B.lon]], { padding: [60, 60] });
+      } }, h('span', { class: 'grow' }, `${nn(l.a)} ↔ ${nn(l.b)}`), h('span', { class: 'val' }, `${(l.dist / 1000).toFixed(1)} km${l.snr != null ? ' · ' + l.snr + ' dB' : ''}`))))) : null,
+      h('div', { class: 'site-card' }, h('h4', {}, 'Traceroutes'), h('div', { class: 'list', id: 'traces' }, h('div', { class: 'empty' }, '…'))),
+    );
+    api('/mesh/traces').then((ts) => {
+      const box = body.querySelector('#traces');
+      if (!box) return;
+      box.replaceChildren(...(ts.length ? ts.slice(0, 15).map((t) => h('div', { class: 'list-item', style: { flexDirection: 'column', alignItems: 'flex-start', cursor: 'pointer' }, onclick: () => {
+        const pts = [t.from, ...t.route, t.to].map((id) => S.mesh.nodes.get(id)).filter((n) => n?.lat).map((n) => [n.lat, n.lon]);
+        layers.track.clearLayers();
+        if (pts.length > 1) { L.polyline(pts, { color: '#a78bfa', weight: 3 }).addTo(layers.track); map.fitBounds(pts, { padding: [50, 50] }); }
+      } }, h('div', {}, [t.from, ...t.route, t.to].map(nn).join(' → ')), h('small', { class: 'tile-sub' }, `${ago(t.ts)} · SNR ${t.snr.join(' / ')} dB`)))
+        : [h('div', { class: 'empty' }, 'Noch keine. Starte in der Meshtastic-App einen Traceroute – das Ergebnis erscheint hier.')]));
+    });
+  }
+  const kpi = (k, v) => h('div', { class: 'ana-kpi' }, h('div', { class: 'v' }, v), h('div', { class: 'k' }, k));
+
   // ---------- Seitenleiste ----------
   function drawSide() {
     const body = h('div', { class: 'side-body' });
@@ -232,6 +279,8 @@ export function renderMap(view, actions) {
           n.shortName ? h('span', { class: 'short' }, n.shortName) : null, h('span', { class: 'tile-sub' }, ago(n.lastSeen))),
         h('div', { class: 'meta' }, nodeMeta(n), n.lat ? null : h('span', {}, icon('map-marker-off'), ' keine Position'))));
       }
+    } else if (panel === 'analysis') {
+      drawAnalysis(body);
     } else {
       const msgs = h('div', { class: 'msgs' });
       for (const m of S.mesh.messages.slice(-150)) {
@@ -242,8 +291,8 @@ export function renderMap(view, actions) {
       if (!S.mesh.messages.length) msgs.append(h('div', { class: 'empty' }, 'Noch keine Nachrichten'));
       body.append(msgs);
       setTimeout(() => (msgs.scrollTop = msgs.scrollHeight));
-      const to = h('select', { class: 'input', style: { flex: '0 0 110px' } }, h('option', { value: 'all' }, 'Alle'),
-        [...S.mesh.nodes.values()].map((n) => h('option', { value: n.id }, nodeName(n))));
+      const to = h('select', { class: 'input', style: { flex: '0 0 110px' }, onchange: (e) => (dmTo = e.target.value) }, h('option', { value: 'all' }, 'Alle'),
+        [...S.mesh.nodes.values()].map((n) => h('option', { value: n.id, selected: dmTo === n.id }, nodeName(n))));
       const text = h('input', { class: 'input', placeholder: 'Nachricht ins Mesh …', maxlength: 200 });
       const send = async () => {
         if (!text.value) return;
@@ -252,7 +301,7 @@ export function renderMap(view, actions) {
       text.onkeydown = (e) => e.key === 'Enter' && send();
       footer = h('div', { class: 'send-row' }, to, text, h('button', { class: 'btn primary icon', onclick: send }, icon('send')));
     }
-    side.replaceChildren(...[seg([['sites', 'Standorte'], ['mesh', 'Mesh'], ['msgs', 'Nachrichten']], panel, (v) => { panel = S.mapPanel = v; drawSide(); }), body, footer].filter(Boolean));
+    side.replaceChildren(...[seg([['sites', 'Orte'], ['mesh', 'Mesh'], ['msgs', 'Chat'], ['analysis', 'Analyse']], panel, (v) => { panel = S.mapPanel = v; drawSide(); }), body, footer].filter(Boolean));
   }
   drawSide();
 
@@ -261,6 +310,7 @@ export function renderMap(view, actions) {
   offs.push(
     on('mesh-node', () => later(() => { drawMesh(); drawSide(); })),
     on('mesh-text', () => panel === 'msgs' && drawSide()),
+    on('mesh-trace', () => panel === 'analysis' && drawSide()),
     on('state', ({ entity_id }) => {
       if (S.sites.some((s) => s.entities?.includes(entity_id)) && panel === 'sites') later(drawSide);
       if (/^(person|device_tracker|zone)\./.test(entity_id)) later(drawHa);
@@ -268,6 +318,13 @@ export function renderMap(view, actions) {
   );
   return () => { offs.forEach((o) => o()); map?.remove(); };
 }
+
+function distKm(lat1, lon1, lat2, lon2) {
+  const r = Math.PI / 180;
+  const a = Math.sin(((lat2 - lat1) * r) / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(((lon2 - lon1) * r) / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(a));
+}
+const PORT_DE = { telemetry: 'Telemetrie', position: 'Position', nodeinfo: 'Node-Info', text: 'Nachrichten', traceroute: 'Traceroute', neighborinfo: 'Nachbarn', mapreport: 'Map-Report', routing: 'Routing', encrypted: 'verschlüsselt', waypoint: 'Wegpunkt', rangetest: 'Reichweitentest', storeforward: 'Store&Forward', paxcounter: 'Paxcounter' };
 
 function escape(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);

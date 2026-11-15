@@ -1,5 +1,18 @@
 // Gemeinsamer Zustand, API-Hilfen, kleine UI-Bausteine.
 
+// append/replaceChildren/prepend/before/after: verschachtelte Listen auflösen, null/false/undefined überspringen.
+for (const proto of [Element.prototype, DocumentFragment.prototype]) {
+  for (const name of ['append', 'prepend', 'replaceChildren', 'before', 'after']) {
+    const orig = proto[name];
+    if (!orig || orig.__clean) continue;
+    const wrapped = function (...args) {
+      return orig.apply(this, args.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false));
+    };
+    wrapped.__clean = true;
+    proto[name] = wrapped;
+  }
+}
+
 export const S = {
   settings: {},
   envLocked: [],

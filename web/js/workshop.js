@@ -3,9 +3,10 @@ import { S, h, icon, api, apiStream, on, emit, toast, hexToRgb, friendly, stateT
 import { pickEntity, pickMeshNode } from './editor.js';
 import { nodeName } from './tiles.js';
 import { startBackground } from './hud-bg.js';
+import { githubTab, diaryTab, resourcesTab, esphomeTab, partsStock, linkPart, reposPanel, repoSummary, resourceStatus } from './workshop-extra.js';
 
 const STATUS = { idea: 'Idee', active: 'In Arbeit', paused: 'Pausiert', done: 'Fertig' };
-const TABS = [['overview', 'Übersicht'], ['tasks', 'Aufgaben'], ['parts', 'Teile'], ['notes', 'Notizen'], ['sensors', 'Sensoren'], ['links', 'Links']];
+const TABS = [['overview', 'Übersicht'], ['tasks', 'Aufgaben'], ['diary', 'Tagebuch'], ['parts', 'Teile'], ['notes', 'Notizen'], ['github', 'GitHub'], ['server', 'Server'], ['esphome', 'ESPHome'], ['sensors', 'Sensoren'], ['links', 'Links']];
 const general = { chat: [] };
 
 // ---------- Mini-Markdown (sicher: erst escapen) ----------
@@ -27,6 +28,7 @@ function md(src) {
 export function renderWorkshop(view, initialId) {
   const offs = [];
   let sel = S.projects.find((p) => p.id === initialId) || S.projects.find((p) => p.id === S.workshopSel) || S.projects[0] || null;
+  let leftMode = 'projects';
   let ptab = 'overview', filter = 'all', provider = S.settings.defaultAi || 'claude', speak = false, busy = null, mobile = 'center';
 
   const root = h('div', { class: 'hud' });
@@ -105,9 +107,16 @@ export function renderWorkshop(view, initialId) {
 
   // ---------- Links: Projektliste ----------
   function drawLeft() {
+    const modeSwitch = h('div', { style: { display: 'flex', gap: '4px' } }, [['projects', 'Projekte'], ['repos', 'Repos']].map(([k, l]) =>
+      h('button', { class: 'hud-btn' + (leftMode === k ? ' on' : ''), onclick: () => { leftMode = k; drawLeft(); } }, l)));
+    if (leftMode === 'repos') {
+      const { body, syncBtn } = reposPanel((p) => { leftMode = 'projects'; select(p); mobile = 'center'; drawMtabs(); applyMobile(); });
+      left.replaceChildren(h('div', { class: 'hud-h' }, modeSwitch, h('span', { class: 'spacer' }), syncBtn), body);
+      return;
+    }
     const list = S.projects.filter((p) => filter === 'all' || p.status === filter);
     left.replaceChildren(
-      h('div', { class: 'hud-h' }, 'Projekte', h('span', { class: 'n' }, String(S.projects.length).padStart(2, '0')), h('span', { class: 'spacer' }),
+      h('div', { class: 'hud-h' }, modeSwitch, h('span', { class: 'n' }, String(S.projects.length).padStart(2, '0')), h('span', { class: 'spacer' }),
         h('button', { class: 'hud-btn icon', title: 'Neues Projekt', onclick: async () => {
           const p = await api('/projects', { body: { name: 'Neues Projekt', status: 'idea', color: S.settings.accent } });
           S.projects.unshift(p);
@@ -118,7 +127,9 @@ export function renderWorkshop(view, initialId) {
         h('button', { class: 'hud-btn' + (filter === k ? ' on' : ''), onclick: () => { filter = k; drawLeft(); } }, l))),
       h('div', { class: 'hud-body' }, list.length ? list.map((p) => h('div', {
         class: 'proj' + (p === sel ? ' sel' : ''), style: { '--pc': hexToRgb(p.color) }, onclick: () => { select(p); mobile = 'center'; drawMtabs(); applyMobile(); },
-      }, h('div', { class: 'nm' }, p.name), h('div', { class: 'st' }, h('span', {}, STATUS[p.status] || p.status), h('span', {}, p.progress + '%')),
+      }, h('div', { class: 'nm' }, p.name, p.repo ? h('span', { class: 'proj-ic', title: p.repo }, icon('github')) : null,
+        (p.resources || []).some((r) => ['RUNNING', 'IDLE'].includes(String(resourceStatus(r)?.state).toUpperCase())) ? h('span', { class: 'proj-ic live', title: 'läuft' }, icon('circle')) : null),
+      h('div', { class: 'st' }, h('span', {}, STATUS[p.status] || p.status), h('span', {}, p.progress + '%')),
       h('div', { class: 'bar' }, h('div', { style: { width: p.progress + '%' } })))) : h('div', { class: 'ai-empty' }, 'Keine Projekte')));
   }
 
@@ -186,7 +197,20 @@ export function renderWorkshop(view, initialId) {
         open.slice(0, 5).map((t) => taskRow(p, t)),
         !open.length ? h('div', { class: 'ai-empty' }, p.tasks.length ? 'Alles erledigt ✓' : 'Noch keine Aufgaben') : null,
         p.entities.length ? [h('div', { class: 'hud-h', style: { padding: '14px 0 6px', border: 0 } }, 'Live-Werte'), sensorReadouts(p, false)] : null,
+        p.resources?.length ? [h('div', { class: 'hud-h', style: { padding: '14px 0 6px', border: 0 } }, 'Läuft auf'), h('div', { class: 'readouts' }, p.resources.map((r) => {
+          const it = resourceStatus(r);
+          return readout(r.name, it ? (['RUNNING', 'IDLE'].includes(String(it.state).toUpperCase()) ? '● läuft' : '○ aus') : r.type === 'host' ? 'Rechner' : '–');
+        }))] : null,
+        p.repo ? repoSummary(p) : null,
         p.notes ? [h('div', { class: 'hud-h', style: { padding: '14px 0 6px', border: 0 } }, 'Notizen'), h('div', { class: 'md', html: md(p.notes.slice(0, 1200)) })] : null);
+    } else if (ptab === 'github') {
+      githubTab(p, add, md, save, drawCenter);
+    } else if (ptab === 'diary') {
+      diaryTab(p, add);
+    } else if (ptab === 'server') {
+      resourcesTab(p, add, save, drawCenter);
+    } else if (ptab === 'esphome') {
+      esphomeTab(p, add, save, drawCenter);
     } else if (ptab === 'tasks') {
       const input = h('input', { class: 'hud-input', placeholder: 'Neue Aufgabe + Enter', onkeydown: (e) => {
         if (e.key !== 'Enter' || !e.target.value.trim()) return;
@@ -196,16 +220,20 @@ export function renderWorkshop(view, initialId) {
       } });
       add(input, h('div', { style: { marginTop: '8px' } }, p.tasks.map((t) => taskRow(p, t, true))));
     } else if (ptab === 'parts') {
+      let partsBox;
       const name = h('input', { class: 'hud-input', placeholder: 'Bauteil (z. B. ESP32-C3, BME280)' });
       const qty = h('input', { class: 'hud-input', type: 'number', value: 1, style: { width: '70px' } });
       const addPart = () => { if (!name.value.trim()) return; p.parts.push({ id: Math.random().toString(36).slice(2, 9), name: name.value.trim(), qty: Number(qty.value) || 1, have: false }); save(); drawCenter(); };
       name.onkeydown = (e) => e.key === 'Enter' && addPart();
       add(h('div', { style: { display: 'flex', gap: '6px' } }, name, qty, h('button', { class: 'hud-btn', onclick: addPart }, icon('plus'))),
-        h('div', { style: { marginTop: '8px' } }, p.parts.map((x, i) => h('div', { class: 'task' + (x.have ? ' done' : '') },
+        (partsBox = h('div', { style: { marginTop: '8px' } }, p.parts.map((x, i) => h('div', { class: 'task' + (x.have ? ' done' : '') },
           h('button', { class: 'chk', title: 'vorhanden', onclick: () => { x.have = !x.have; save(); drawCenter(); } }, x.have ? '✓' : ''),
           h('span', { class: 't' }, `${x.qty}× ${x.name}`),
-          h('button', { class: 'x', onclick: () => { p.parts.splice(i, 1); save(); drawCenter(); } }, '×')))),
+          x.inventree ? h('span', { class: 'gh-meta', 'data-pk': x.inventree }, 'Lager …') : null,
+          S.settings.inventreeUrl ? h('button', { class: 'hud-btn icon', title: 'Mit Teilelager verknüpfen', onclick: () => linkPart(x, save, drawCenter) }, icon('package-variant-closed')) : null,
+          h('button', { class: 'x', onclick: () => { p.parts.splice(i, 1); save(); drawCenter(); } }, '×'))))),
         !p.parts.length ? h('div', { class: 'ai-empty' }, 'Stückliste leer – frag die KI nach einer Teileliste.') : null);
+      partsStock(p, partsBox, save, drawCenter);
     } else if (ptab === 'notes') {
       let editing = !p.notes;
       const box = h('div', {});
@@ -283,7 +311,7 @@ export function renderWorkshop(view, initialId) {
     log.replaceChildren(...c.map(msgEl));
     if (!c.length) {
       const ideas = sel
-        ? [`Erstelle eine Teileliste für ${sel.name}`, 'Was sind die nächsten sinnvollen Schritte?', 'Schreib mir eine ESPHome-YAML dafür']
+        ? (sel.repo ? [`Was hat sich zuletzt in ${sel.repo} getan?`, 'Was sind die nächsten sinnvollen Schritte?', 'Läuft der Build gerade?'] : [`Erstelle eine Teileliste für ${sel.name}`, 'Was sind die nächsten sinnvollen Schritte?', 'Schreib mir eine ESPHome-YAML dafür'])
         : ['Welche Mesh-Nodes sind gerade offline?', 'Mach im Wohnzimmer das Licht auf 30 %'];
       log.append(h('div', { class: 'ai-empty' }, `${provider === 'claude' ? 'CLAUDE' : 'KOPF'} BEREIT`, h('br'), sel ? `Kontext: ${sel.name}` : 'Kein Projekt gewählt',
         h('div', { class: 'suggest' }, ideas.map((t) => h('button', { class: 'hud-btn', onclick: () => { input.value = t; send(); } }, t)))));
@@ -369,6 +397,8 @@ export function renderWorkshop(view, initialId) {
   offs.push(
     on('state', ({ entity_id }) => { if (sel?.entities.includes(entity_id) && ['overview', 'sensors'].includes(ptab)) { clearTimeout(liveT); liveT = setTimeout(drawCenterKeepFocus, 500); } }),
     on('mesh-node', () => drawStats()),
+    on('unraid', () => { if (['overview', 'server'].includes(ptab)) drawCenterKeepFocus(); drawLeftSoon(); }),
+    on('projects', () => drawLeftSoon()),
     on('ha', drawStats),
   );
   function drawCenterKeepFocus() { if (!center.contains(document.activeElement)) drawCenter(); }

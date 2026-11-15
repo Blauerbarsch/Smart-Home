@@ -10,6 +10,8 @@ class HomeAssistant extends EventEmitter {
     this.areas = [];
     this.entityAreas = {};
     this.devices = [];
+    this.notifications = {};
+    this.notifSub = null;
     this.status = 'disconnected';
     this.error = '';
     this.ws = null;
@@ -69,6 +71,15 @@ class HomeAssistant extends EventEmitter {
       } else if (msg.type === 'auth_ok') {
         this.retry = 0;
         await this.bootstrap();
+      } else if (msg.type === 'event' && msg.id === this.notifSub) {
+        // persistent_notification/subscribe: current | added | updated | removed
+        const ev = msg.event;
+        if (ev.type === 'current') this.notifications = {};
+        for (const [nid, n] of Object.entries(ev.notifications || {})) {
+          if (ev.type === 'removed') delete this.notifications[nid];
+          else this.notifications[nid] = n;
+        }
+        this.emit('notifications', Object.values(this.notifications));
       } else if (msg.type === 'event' && msg.event?.event_type === 'state_changed') {
         const { entity_id, new_state } = msg.event.data;
         if (new_state) this.states.set(entity_id, new_state);
@@ -115,6 +126,8 @@ class HomeAssistant extends EventEmitter {
       const states = await this.send({ type: 'get_states' });
       this.states = new Map(states.map((s) => [s.entity_id, s]));
       await this.send({ type: 'subscribe_events', event_type: 'state_changed' });
+      this.notifSub = this.msgId;
+      this.send({ type: 'persistent_notification/subscribe' }).catch(() => (this.notifSub = null));
       try {
         this.areas = await this.send({ type: 'config/area_registry/list' });
         const ents = await this.send({ type: 'config/entity_registry/list' });
@@ -133,6 +146,10 @@ class HomeAssistant extends EventEmitter {
     } catch (e) {
       this.setStatus('error', e.message);
     }
+  }
+
+  dismissNotification(nid) {
+    return this.callService('persistent_notification', 'dismiss', { notification_id: nid });
   }
 
   callService(domain, service, data = {}, target) {

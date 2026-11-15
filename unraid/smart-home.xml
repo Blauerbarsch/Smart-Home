@@ -24,6 +24,9 @@
   <Config Name="Kopf head-brain URL" Target="KOPF_URL" Default="" Description="z. B. http://192.168.1.20:8100" Type="Variable" Display="advanced" Required="false"></Config>
   <Config Name="Kopf head-output URL" Target="KOPF_OUTPUT_URL" Default="" Type="Variable" Display="advanced" Required="false"></Config>
   <Config Name="Kopf head-vision URL" Target="KOPF_VISION_URL" Default="" Type="Variable" Display="advanced" Required="false"></Config>
+  <Config Name="Unraid-API URL" Target="UNRAID_URL" Default="" Description="Für Container/VMs/Array und den Update-Knopf, z. B. http://192.168.188.175" Type="Variable" Display="always" Required="false"></Config>
+  <Config Name="Unraid-API Key" Target="UNRAID_API_KEY" Default="" Description="Settings → Management Access → API Keys" Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="GitHub-Token" Target="GITHUB_TOKEN" Default="" Description="Nur für private Repos nötig (nur Lesen)" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
   <Config Name="MQTT URL (Meshtastic)" Target="MQTT_URL" Default="" Description="z. B. mqtt://192.168.1.10:1883" Type="Variable" Display="always" Required="false"></Config>
   <Config Name="MQTT Benutzer" Target="MQTT_USER" Default="" Type="Variable" Display="advanced" Required="false"></Config>
   <Config Name="MQTT Passwort" Target="MQTT_PASSWORD" Default="" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>

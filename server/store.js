@@ -7,6 +7,7 @@ export const DATA_DIR = process.env.DATA_DIR || path.resolve('data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const SECRET_KEYS = ['haToken', 'anthropicKey', 'mqttPassword'];
+const URL_KEYS = { haUrl: 'http://', kopfUrl: 'http://', kopfOutputUrl: 'http://', kopfVisionUrl: 'http://', esphomeUrl: 'http://', mqttUrl: 'mqtt://' };
 
 function readJson(file, fallback) {
   try {
@@ -110,6 +111,9 @@ export function saveSettings(patch) {
   for (const [k, v] of Object.entries(patch || {})) {
     if (!(k in DEFAULT_CONFIG.settings)) continue;
     if (SECRET_KEYS.includes(k) && (v === '••••••••' || v === undefined)) continue;
+    if (typeof v === 'string') v = v.trim();
+    // Adressen ohne Schema ergänzen: „192.168.1.10:8123“ → „http://192.168.1.10:8123“
+    if (URL_KEYS[k] && v && !/^[a-z]+:\/\//i.test(v)) v = URL_KEYS[k] + v;
     config.settings[k] = v;
   }
   writeJson('config.json', config);

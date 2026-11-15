@@ -108,7 +108,7 @@ export function publicSettings() {
 }
 
 export function saveSettings(patch) {
-  for (const [k, v] of Object.entries(patch || {})) {
+  for (let [k, v] of Object.entries(patch || {})) {
     if (!(k in DEFAULT_CONFIG.settings)) continue;
     if (SECRET_KEYS.includes(k) && (v === '••••••••' || v === undefined)) continue;
     if (typeof v === 'string') v = v.trim();

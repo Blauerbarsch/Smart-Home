@@ -206,6 +206,8 @@ export async function runTool(name, input, projectId) {
     case 'find_entities':
       return ha.summary(input.query || '').slice(0, 60);
     case 'call_service':
+      if (!input.entity_id && !input.data?.entity_id && !input.data?.area_id && !['scene', 'script', 'notify', 'automation'].includes(input.domain))
+        return { error: 'entity_id fehlt. Erst mit find_entities das Gerät suchen und dann call_service mit entity_id aufrufen.' };
       await ha.callService(input.domain, input.service, input.data || {}, input.entity_id ? { entity_id: input.entity_id } : undefined);
       return { ok: true };
     case 'mesh_nodes':

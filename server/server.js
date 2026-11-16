@@ -26,7 +26,7 @@ import * as calendar from './calendar.js';
 const PORT = Number(process.env.PORT || 8080);
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
 const PASSWORD = process.env.APP_PASSWORD || '';
-const VERSION = '0.4.2';
+const VERSION = '0.4.3';
 
 // ---------- Anmeldung (optional über APP_PASSWORD) ----------
 const sessions = new Set(store.readJson('sessions.json', []));

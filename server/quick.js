@@ -40,6 +40,25 @@ function candidates() {
   return out;
 }
 
+/**
+ * Aus gleich guten Treffern genau einen wählen:
+ * 1. Kachel-Titel im Dashboard gehen vor (das ist „dein“ Name dafür),
+ * 2. Lampe und Schalter desselben Geräts (z. B. Shelly: light.x und switch.x) → die Lampe.
+ * Sonst mehrdeutig (leere Liste).
+ */
+function pickOne(list) {
+  let uniq = [...new Map(list.map((c) => [c.entity, c])).values()];
+  if (uniq.length > 1) {
+    const tiles = uniq.filter((c) => list.some((x) => x.tile && x.entity === c.entity));
+    if (tiles.length >= 1) uniq = [...new Map(tiles.map((c) => [c.entity, c])).values()];
+  }
+  if (uniq.length > 1) {
+    const ids = new Set(uniq.map((c) => c.entity.split('.')[1]));
+    if (ids.size === 1) uniq = [uniq.find((c) => c.entity.startsWith('light.')) || uniq[0]];
+  }
+  return uniq.length === 1 ? uniq : [];
+}
+
 export function parse(text) {
   const t = norm(text);
   if (!t || t.split(' ').length > 8) return null;
@@ -55,13 +74,13 @@ export function parse(text) {
   if (!hits.length) {
     // Kurzform: „Werkstatt an“ für „Werkstatt Licht“ – nur wenn eindeutig
     const words = rest.split(' ');
-    const part = [...new Map(list.filter((c) => words.every((w) => c.name.split(' ').includes(w))).map((c) => [c.entity, c])).values()];
-    if (part.length !== 1) return null;
+    const part = pickOne(list.filter((c) => words.every((w) => c.name.split(' ').includes(w))));
+    if (!part.length) return null;
     return { entity: part[0].entity, label: part[0].label, op: act.op };
   }
   const best = Math.max(...hits.map((c) => c.name.length));
-  const top = [...new Map(hits.filter((c) => c.name.length === best).map((c) => [c.entity, c])).values()];
-  if (top.length !== 1) return null; // mehrdeutig → das Modell soll fragen
+  const top = pickOne(hits.filter((c) => c.name.length === best));
+  if (!top.length) return null; // mehrdeutig → das Modell soll fragen
   // Der Rest darf nicht viel mehr enthalten als den Namen (sonst ist es kein einfacher Befehl)
   if (rest.split(' ').length > top[0].name.split(' ').length + 1) return null;
   return { entity: top[0].entity, label: top[0].label, op: act.op };

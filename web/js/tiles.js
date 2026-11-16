@@ -3,6 +3,7 @@ import {
   S, h, icon, api, toast, modal, field, ent, domainOf, friendly, callService, entityIcon, stateText, isOn,
   hexToRgb, sparkline, ago,
 } from './core.js';
+import { WEATHER_TILES } from './weather-ui.js';
 
 const histCache = new Map();
 async function history(entityId, hours = 24) {
@@ -231,6 +232,7 @@ export const TILE_TYPES = {
       el.append(list);
     },
   },
+  ...WEATHER_TILES,
   clock: {
     label: 'Uhr & Begrüßung', icon: 'clock-outline', desc: 'Uhrzeit, Datum und Gruß',
     defaults: { w: 2, h: 1 },

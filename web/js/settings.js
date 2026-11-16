@@ -100,6 +100,7 @@ export function renderSettings(view, rerender) {
       h('div', { class: 'row' }, f('ntfy-Adresse (optional)', 'ntfyUrl', { placeholder: 'https://ntfy.sh/mein-geheimes-thema' }), f('ntfy-Token', 'ntfyToken', { type: 'password' })),
       sel('Kopf spricht Alarme aus', 'notifyKopf', [['false', 'Nein'], ['true', 'Ja']]),
       h('div', { class: 'row' }, h('button', { class: 'btn', onclick: async () => { await save(); await api('/alerts/test', { body: { channels: ['browser', 'ha', 'ntfy', 'kopf'] } }).then(() => toast('Test gesendet')).catch((e) => toast(e.message, true)); } }, icon('send'), 'Test senden'))),
+    weatherCard(),
     rulesCard(),
     guardCard(),
     card('package-variant-closed', 'Teilelager (InvenTree)', h('div', { class: 'row' }, f('Adresse', 'inventreeUrl', { placeholder: 'http://192.168.188.175:1337' }), f('API-Token', 'inventreeToken', { type: 'password' }, 'InvenTree → Einstellungen → API-Token'))),
@@ -152,6 +153,14 @@ function rulesCard() {
         params.append(h('button', { type: 'button', class: 'btn', onclick: async () => { const id = await pickEntity(); if (id) { r.entity = id; lbl.textContent = friendly(S.states.get(id), id); } } }, icon('magnify'), lbl), opSel(r), num(r, 'value', 'Wert'), num(r, 'minutes', 'seit min'));
       }
       if (r.type === 'service_down') params.append(h('input', { class: 'input', value: r.url || '', placeholder: 'http://…', oninput: (e) => (r.url = e.target.value) }), h('input', { class: 'input', value: r.label || '', placeholder: 'Name', oninput: (e) => (r.label = e.target.value) }));
+      if (r.type === 'weather') {
+        r.metric ||= 'frost';
+        if (r.value == null) r.value = 0;
+        if (r.notifyResolved == null) r.notifyResolved = false;
+        params.append(h('select', { class: 'input', onchange: (e) => (r.site = e.target.value) }, h('option', { value: '*' }, 'alle Standorte'), S.sites.filter((x) => x.lat).map((x) => h('option', { value: x.id, selected: r.site === x.id }, x.name))),
+          h('select', { class: 'input', onchange: (e) => (r.metric = e.target.value) }, [['frost', 'Frost: Tiefstwert unter (°C)'], ['heat', 'Hitze: Höchstwert über (°C)'], ['gust', 'Sturm: Böen über (km/h)'], ['rain', 'Regen in 24 h über (mm)'], ['snow', 'Schnee angesagt']].map(([k, l]) => h('option', { value: k, selected: r.metric === k }, l))),
+          num(r, 'value', 'Grenze'), h('span', { class: 'tile-sub', style: { alignSelf: 'center', flex: '0 0 auto' } }, 'nächste 24 h'));
+      }
       if (r.type === 'container_stopped') params.append(h('select', { class: 'input', onchange: (e) => (r.target = e.target.value) }, h('option', { value: '' }, '– Container/VM –'),
         [...(S.unraid?.containers || []), ...(S.unraid?.vms || [])].map((x) => h('option', { value: x.name, selected: r.target === x.name }, x.name))));
     };
@@ -246,4 +255,27 @@ function guardCard() {
       h('button', { class: 'btn primary', onclick: async () => { await api('/workbench/guard', { method: 'PUT', body: g }); toast('Wächter gespeichert'); } }, icon('content-save'), 'Speichern'));
   });
   return h('div', { class: 'card' }, h('h3', {}, icon('soldering-iron'), 'Werkstatt-Wächter'), box);
+}
+
+
+// ---------- Wetter (DWD) ----------
+function weatherCard() {
+  const d = (k) => S.settings[k];
+  const put = (k, v) => api('/settings', { method: 'PUT', body: { [k]: v } }).then(({ settings }) => { S.settings = settings; toast('Gespeichert'); }).catch((e) => toast(e.message, true));
+  const select = (label, k, opts) => field(label, h('select', { class: 'input', onchange: (e) => put(k, e.target.value === 'true' ? true : e.target.value === 'false' ? false : e.target.value) },
+    opts.map(([v, l]) => h('option', { value: v, selected: String(d(k) ?? '') === String(v) }, l))));
+  const pollen = h('select', { class: 'input', onchange: (e) => put('pollenRegion', e.target.value) }, h('option', { value: '' }, 'Lade Regionen …'));
+  api('/weather/pollen-regions').then((list) => {
+    if (list.error) throw new Error(list.error);
+    pollen.replaceChildren(h('option', { value: '' }, 'Kein Pollenflug'), ...list.map((r) => h('option', { value: r.id, selected: String(d('pollenRegion')) === String(r.id) }, r.region && r.region !== r.name ? `${r.region} – ${r.name}` : r.name)));
+  }).catch((e) => pollen.replaceChildren(h('option', { value: '' }, 'Nicht erreichbar: ' + e.message)));
+  const numIn = (k, ph) => h('input', { class: 'input', type: 'number', step: 'any', value: d(k) || '', placeholder: ph, onchange: (e) => put(k, Number(e.target.value) || 0) });
+  return h('div', { class: 'card' }, h('h3', {}, icon('weather-partly-cloudy'), 'Wetter (Deutscher Wetterdienst)'),
+    h('p', { class: 'tile-sub', style: { whiteSpace: 'normal' } }, 'Wetter, Regenradar, Warnungen und Pollenflug kommen kostenlos vom DWD – für jeden Standort mit Koordinaten (Reiter „Standorte“). Kacheln: „Wetter“ und „Regenradar“.'),
+    h('div', { class: 'row' },
+      select('Wetter abrufen', 'weatherEnabled', [['true', 'Ja'], ['false', 'Nein']]),
+      select('Amtliche Warnungen melden ab', 'weatherAlertMin', [['minor', 'Wetterwarnung (gelb)'], ['moderate', 'Markante Warnung (orange)'], ['severe', 'Unwetter (rot)'], ['extreme', 'Extremes Unwetter (violett)']])),
+    field('Pollenflug-Region', pollen),
+    h('div', { class: 'row' }, field('PV-Anlage (kWp) für die Ertragsprognose', numIn('pvKwp', 'z. B. 9,8')), field('Wirkungsgrad-Faktor', numIn('pvRatio', '0,85'))),
+    h('p', { class: 'tile-sub', style: { whiteSpace: 'normal' } }, 'Frost- oder Sturmalarm für einen Standort (z. B. Hütte): unten bei den Alarm-Regeln „Wetter-Vorhersage (DWD)“ wählen.'));
 }

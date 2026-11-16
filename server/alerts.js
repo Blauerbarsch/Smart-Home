@@ -14,6 +14,7 @@ export const RULE_TYPES = {
   entity: 'Home-Assistant-Wert',
   service_down: 'Dienst nicht erreichbar',
   container_stopped: 'Container/VM gestoppt',
+  weather: 'Wetter-Vorhersage (DWD)',
 };
 
 const DEFAULT_RULES = [
@@ -90,6 +91,24 @@ class Alerts extends EventEmitter {
         if (!item) return [];
         const running = ['RUNNING'].includes(String(item.state).toUpperCase());
         return [{ key: rule.id, firing: !running, title: `${rule.target} läuft nicht`, text: `${rule.target} ist im Zustand ${item.state}.` }];
+      }
+      case 'weather': {
+        // Vorhersage der nächsten 24 h je Standort (vom Wetter-Modul geliefert)
+        const all = this.extra.weather || {};
+        const ids = rule.site && rule.site !== '*' ? [rule.site] : Object.keys(all);
+        const v = Number(rule.value);
+        const M = {
+          frost: (w) => w.min24 != null && w.min24 < v && [`Frost: ${w.min24} °C`, `In den nächsten 24 Stunden bis ${w.min24} °C (Grenze ${v} °C).`],
+          heat: (w) => w.max24 != null && w.max24 > v && [`Hitze: ${w.max24} °C`, `In den nächsten 24 Stunden bis ${w.max24} °C (Grenze ${v} °C).`],
+          gust: (w) => w.gust24 != null && w.gust24 > v && [`Sturmböen bis ${w.gust24} km/h`, `Böen bis ${w.gust24} km/h erwartet (Grenze ${v} km/h).`],
+          rain: (w) => w.rain24 > v && [`${w.rain24} mm Regen`, `In den nächsten 24 Stunden ${w.rain24} mm Niederschlag erwartet (Grenze ${v} mm).`],
+          snow: (w) => w.snow24 && ['Schnee erwartet', 'In den nächsten 24 Stunden ist Schnee oder Schneeregen vorhergesagt.'],
+        };
+        return ids.filter((sid) => all[sid]).map((sid) => {
+          const w = all[sid];
+          const hit = (M[rule.metric] || M.frost)(w);
+          return { key: `${rule.id}:${sid}`, firing: Boolean(hit), title: `${w.name}: ${hit ? hit[0] : 'Wetter'}`, text: hit ? hit[1] : `${w.name}: Wetterlage unauffällig.` };
+        });
       }
     }
     return [];

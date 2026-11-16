@@ -2,6 +2,7 @@
 import { S, h, icon, api, on, toast, modal, field, seg, saveLayout, uid, ago, friendly, sparkline, hexToRgb } from './core.js';
 import { siteList, siteNodes, nodeName, nodeMeta, freshColor } from './tiles.js';
 import { pickEntity, pickMeshNode } from './editor.js';
+import { siteWeather, wxChip, weatherDetail } from './weather-ui.js';
 
 let leafletReady;
 function loadLeaflet() {
@@ -327,8 +328,10 @@ export function renderMap(view, actions) {
       for (const s of S.sites) {
         const nodes = siteNodes(s);
         const online = nodes.filter((n) => Date.now() - (n.lastSeen || 0) < 2 * 3600e3).length;
+        const wx = h('span', { style: { display: 'contents' } });
+        if (s.lat) siteWeather().then((list) => { const w = list.find((x) => x.id === s.id); const c = wxChip(w); if (c) { c.style.cursor = 'pointer'; c.onclick = () => weatherDetail(s.id); wx.replaceChildren(c); } });
         body.append(h('div', { class: 'site-card', style: { '--tc-rgb': hexToRgb(s.color) } },
-          h('h4', {}, h('span', { class: 'sw', style: { background: s.color } }), s.name, h('span', { class: 'spacer' }),
+          h('h4', {}, h('span', { class: 'sw', style: { background: s.color } }), s.name, h('span', { class: 'spacer' }), wx,
             nodes.length ? h('span', { class: 'chip' }, `${online}/${nodes.length} Nodes`) : null,
             h('button', { class: 'btn icon sm', title: 'Zeigen', onclick: () => s.lat && map?.setView([s.lat, s.lon], 16) }, icon('crosshairs')),
             h('button', { class: 'btn icon sm', title: 'Bearbeiten', onclick: () => editSite(s) }, icon('pencil'))),

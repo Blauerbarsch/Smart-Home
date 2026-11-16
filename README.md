@@ -55,6 +55,13 @@ Docker-Container auf Unraid.
   durchsuchbar – auch per Frage an die KI („Wann war die Hütte zuletzt unter 5 °C?“).
 - **Automationen per Chat**: „Wenn es in der Hütte unter 3 °C hat, Heizung an“ → KI
   schreibt die HA-Automation, du prüfst und speicherst.
+- **Wetter vom Deutschen Wetterdienst (v0.4)** – kostenlos, ohne Schlüssel (über Bright Sky):
+  aktuelles Wetter, Stunden- und 8-Tage-Vorhersage, **„Regen in 15 min“** aus dem Radar,
+  **Regenradar-Kachel** mit Prognose, **amtliche Warnungen** als Push/Kopf/Mesh,
+  **Pollenflug** (DWD-Gefahrenindex) und **PV-Ertragsprognose**. Für jeden Standort –
+  auch die Hütte; dazu Alarm-Regeln wie „Frost an der Hütte unter 0 °C“.
+- **Kalender & Müllabfuhr**: ICS-Kalender (Abfallkalender der Gemeinde, Google, Nextcloud)
+  als Kachel, Tonnen farbig, Erinnerung am Vorabend. Kopf weiß auch, welche Tonne morgen dran ist.
 - Als **App installierbar** (PWA) auf Android, iOS und Linux.
 
 Keine externen Node-Abhängigkeiten: Server und Oberfläche laufen mit Node 22 pur.
@@ -199,6 +206,8 @@ npm run dev          # mit Neustart bei Änderungen
 | `server/chronik.js`, `automations.js` | Chronik, HA-Automationen per KI |
 | `server/fieldbus.js` | Modbus TCP und SCPI ohne Abhängigkeiten |
 | `server/meshcmd.js` | Befehle über Mesh-Nachrichten |
+| `server/weather.js` | Wetter, Radar, Warnungen (Bright Sky/DWD), Pollenflug |
+| `server/calendar.js` | ICS-Kalender, Müll-Erkennung, Erinnerungen |
 | `server/maker.js` | Uploads, Tagebuch, InvenTree, ESPHome, Moonraker |
 | `server/ha.js` | WebSocket-Verbindung zu Home Assistant |
 | `server/mqtt.js`, `server/mesh.js` | MQTT-Client und Meshtastic-Auswertung |

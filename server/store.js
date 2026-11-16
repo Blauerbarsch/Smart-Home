@@ -66,6 +66,11 @@ const DEFAULT_CONFIG = {
     unraidApiKey: '',
     inventreeUrl: '',
     inventreeToken: '',
+    weatherEnabled: true,
+    weatherAlertMin: 'moderate',
+    pollenRegion: '',
+    pvKwp: 0,
+    pvRatio: 0.85,
   },
   sites: [],
   tabs: [

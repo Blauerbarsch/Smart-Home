@@ -19,11 +19,13 @@ import * as autom from './automations.js';
 import * as fieldbus from './fieldbus.js';
 import './meshcmd.js';
 import { ask } from './llm.js';
+import * as weather from './weather.js';
+import * as calendar from './calendar.js';
 
 const PORT = Number(process.env.PORT || 8080);
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
 const PASSWORD = process.env.APP_PASSWORD || '';
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 // ---------- Anmeldung (optional über APP_PASSWORD) ----------
 const sessions = new Set(store.readJson('sessions.json', []));
@@ -396,7 +398,7 @@ route('POST', '/api/agent/call', async (req, res) => {
   try {
     const result = await runTool(name, input || {}, projectId);
     broadcast('agent', { name, input, at: Date.now() });
-    if (!['find_entities', 'mesh_nodes', 'server_status', 'repo_info', 'chronik_search', 'list_timers', 'parts_search', 'diary_add', 'set_timer', 'automation_draft'].includes(name)) {
+    if (!['find_entities', 'mesh_nodes', 'server_status', 'repo_info', 'chronik_search', 'list_timers', 'parts_search', 'diary_add', 'set_timer', 'automation_draft', 'get_weather', 'calendar_upcoming'].includes(name)) {
       chronik.add({ source: 'ki', kind: name, title: `Kopf: ${name.replace(/_/g, ' ')}`, detail: JSON.stringify(input).slice(0, 200), icon: 'robot-outline' });
     }
     json(res, 200, { result });
@@ -468,6 +470,30 @@ route('POST', '/api/kopf/body/reset', async (req, res) => json(res, 200, await w
 route('PUT', '/api/kopf/poses', async (req, res) => json(res, 200, wbench.savePoses(await body(req))));
 
 // Chronik
+// ---------- Wetter (DWD) + Kalender ----------
+route('GET', '/api/weather', async (req, res, p, q) => {
+  try { json(res, 200, await weather.overview(q.get('site') || '')); } catch (e) { json(res, 200, { error: e.message }); }
+});
+route('GET', '/api/weather/radar', async (req, res, p, q) => {
+  const site = weather.siteFor(q.get('site') || '');
+  if (!site) return json(res, 200, { error: 'Kein Standort mit Koordinaten' });
+  try { json(res, 200, await weather.radar(site, Math.min(150, Math.max(10, Number(q.get('km')) || 50)))); } catch (e) { json(res, 200, { error: e.message }); }
+});
+route('GET', '/api/weather/sites', async (req, res) => {
+  const out = await Promise.all(weather.sitesWithCoords().map(async (s) => {
+    const [c, w] = await Promise.all([weather.current(s).catch(() => null), weather.warnings(s).catch(() => null)]);
+    return { id: s.id, temp: c?.temp ?? null, icon: c?.icon || null, warnLevel: Math.max(0, ...(w?.list || []).map((x) => x.level)), warnings: (w?.list || []).map((x) => x.headline) };
+  }));
+  json(res, 200, out);
+});
+route('GET', '/api/weather/pollen-regions', async (req, res) => {
+  try { json(res, 200, await weather.pollenRegions()); } catch (e) { json(res, 200, { error: e.message }); }
+});
+route('GET', '/api/calendar', async (req, res, p, q) => {
+  const urls = (q.get('urls') || '').split(/\s+/).filter(Boolean);
+  if (!urls.every((u) => /^(https?|webcal):\/\//i.test(u))) return json(res, 400, { error: 'Nur http(s)- oder webcal-Adressen' });
+  json(res, 200, await calendar.upcoming(urls, Math.min(Number(q.get('days')) || 14, 120)));
+});
 route('GET', '/api/chronik', (req, res, p, q) => json(res, 200, { entries: chronik.search({ text: q.get('text') || '', source: q.get('source') || '', days: Number(q.get('days')) || 30, before: q.get('before'), limit: Number(q.get('limit')) || 300 }), stats: chronik.stats(Number(q.get('days')) || 30) }));
 route('POST', '/api/chronik', async (req, res) => { const b = await body(req); json(res, 200, chronik.add({ source: 'werkstatt', kind: 'notiz', title: b.title, detail: b.detail, icon: 'pencil' })); });
 
@@ -529,6 +555,8 @@ server.listen(PORT, () => {
   ha.connect();
   mesh.restart();
   alerts.start();
+  weather.watch.start();
+  calendar.startReminders();
   github.start();
   services.startChecks();
   // Unraid-Daten für Alarme (Container/VM gestoppt) regelmäßig holen

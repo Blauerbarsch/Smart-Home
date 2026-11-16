@@ -7,6 +7,8 @@ import * as unraid from './unraid.js';
 import { github } from './github.js';
 import { inventreeSearch, uploadPath } from './maker.js';
 import fs from 'node:fs';
+import * as weather from './weather.js';
+import * as calendar from './calendar.js';
 import * as wbench from './workbench.js';
 import * as chronik from './chronik.js';
 import * as autom from './automations.js';
@@ -143,6 +145,16 @@ const TOOLS = [
     input_schema: { type: 'object', properties: { description: { type: 'string' } }, required: ['description'] },
   },
   {
+    name: 'get_weather',
+    description: 'Wetter vom Deutschen Wetterdienst für einen Standort (Standard: Zuhause): aktuell, Regen in den nächsten 2 Stunden, 4-Tage-Vorhersage, Unwetterwarnungen, Pollenflug, PV-Prognose.',
+    input_schema: { type: 'object', properties: { site: { type: 'string', description: 'Name des Standorts, z. B. „Waldhütte“' } } },
+  },
+  {
+    name: 'calendar_upcoming',
+    description: 'Nächste Termine aus den Kalendern im Dashboard, inkl. Müllabfuhr (welche Tonne wann).',
+    input_schema: { type: 'object', properties: { days: { type: 'number' } } },
+  },
+  {
     name: 'add_project_task',
     description: 'Fügt dem aktuellen Projekt eine Aufgabe hinzu.',
     input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
@@ -181,6 +193,14 @@ export async function runTool(name, input, projectId) {
       const d = await autom.draft(input.description, settings().notifyHaService);
       autom.addPending(d);
       return { explanation: d.explanation, warnings: d.warnings, hint: 'Entwurf liegt im Dashboard unter „Automationen“ zur Bestätigung bereit.' };
+    }
+    case 'get_weather': {
+      const site = weather.sitesWithCoords().find((x) => input.site && x.name.toLowerCase().includes(String(input.site).toLowerCase()));
+      return weather.summary(site?.id);
+    }
+    case 'calendar_upcoming': {
+      const { events, errors } = await calendar.allUpcoming(Math.min(Number(input.days) || 7, 31));
+      return { termine: events.slice(0, 40).map((e) => ({ wann: new Date(e.start).toLocaleString('de-DE', e.allDay ? { weekday: 'short', day: '2-digit', month: '2-digit' } : { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }), was: e.summary, tonne: e.waste?.kind })), fehler: errors.length ? errors : undefined };
     }
     case 'find_entities':
       return ha.summary(input.query || '').slice(0, 60);

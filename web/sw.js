@@ -1,9 +1,9 @@
 // Service Worker: App-Hülle offline verfügbar, API immer live.
-const CACHE = 'smarthome-v3';
+const CACHE = 'smarthome-v4';
 const SHELL = ['/', '/css/app.css', '/css/hud.css', '/js/app.js', '/js/core.js', '/js/tiles.js', '/js/grid.js', '/js/editor.js',
   '/js/settings.js', '/js/map.js', '/js/workshop.js', '/js/hud-bg.js', '/js/notify.js', '/js/kiosk.js',
   '/js/server.js', '/js/floorplan.js', '/js/workshop-extra.js', '/js/workbench-ui.js', '/js/esptools.js',
-  '/js/stl.js', '/js/chronik-ui.js', '/icons/icon.svg', '/manifest.webmanifest', '/vendor/mdi/css/materialdesignicons.min.css',
+  '/js/stl.js', '/js/chronik-ui.js', '/js/weather-ui.js', '/icons/icon.svg', '/manifest.webmanifest', '/vendor/mdi/css/materialdesignicons.min.css',
   '/vendor/mdi/fonts/materialdesignicons-webfont.woff2', '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css'];
 
 self.addEventListener('install', (e) => {

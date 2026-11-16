@@ -20,12 +20,13 @@ import * as fieldbus from './fieldbus.js';
 import './meshcmd.js';
 import { ask } from './llm.js';
 import * as weather from './weather.js';
+import { quick, pickTools } from './quick.js';
 import * as calendar from './calendar.js';
 
 const PORT = Number(process.env.PORT || 8080);
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
 const PASSWORD = process.env.APP_PASSWORD || '';
-const VERSION = '0.4.1';
+const VERSION = '0.4.2';
 
 // ---------- Anmeldung (optional über APP_PASSWORD) ----------
 const sessions = new Set(store.readJson('sessions.json', []));
@@ -388,7 +389,26 @@ const agentOk = (req) => {
 };
 route('GET', '/api/agent/tools', (req, res) => {
   if (!agentOk(req)) return json(res, 401, { error: 'Falscher Agent-Schlüssel' });
-  json(res, 200, { tools: toolsFor(Boolean(store.settings().aiHomeControl)) });
+  const all = toolsFor(Boolean(store.settings().aiHomeControl));
+  const q = new URL(req.url, 'http://x').searchParams.get('q');
+  // Mit ?q=<Frage> nur die passenden Werkzeuge (weniger Text fürs Modell); nichts Passendes → alle
+  const picked = q ? pickTools(q, all) : all;
+  json(res, 200, { tools: picked.length ? picked : all });
+});
+// Schnellweg für einfache Schaltbefehle (Kopf per Sprache)
+route('POST', '/api/agent/quick', async (req, res) => {
+  if (!agentOk(req)) return json(res, 401, { error: 'Falscher Agent-Schlüssel' });
+  const { text } = await body(req);
+  try {
+    const r = await quick(text);
+    if (r) {
+      broadcast('agent', { name: 'call_service', input: { entity_id: r.entity }, at: Date.now() });
+      chronik.add({ source: 'ki', kind: 'schnellweg', title: `Kopf: ${r.reply.replace(/\.$/, '')}`, detail: text, ref: r.entity, icon: 'robot-outline' });
+    }
+    json(res, 200, r ? { handled: true, ...r } : { handled: false });
+  } catch (e) {
+    json(res, 200, { handled: false, error: e.message });
+  }
 });
 route('POST', '/api/agent/call', async (req, res) => {
   if (!agentOk(req)) return json(res, 401, { error: 'Falscher Agent-Schlüssel' });

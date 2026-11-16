@@ -8,6 +8,7 @@ import { github } from './github.js';
 import { inventreeSearch, uploadPath } from './maker.js';
 import fs from 'node:fs';
 import * as weather from './weather.js';
+import { quick, pickTools } from './quick.js';
 import * as calendar from './calendar.js';
 import * as wbench from './workbench.js';
 import * as chronik from './chronik.js';
@@ -346,11 +347,25 @@ async function chatKopf({ messages, projectId }, emit, signal) {
   const s = settings();
   if (!s.kopfUrl) throw new Error('Kopf-Adresse fehlt (Einstellungen)');
   const url = s.kopfUrl.replace(/\/$/, '') + '/v1/chat/completions';
-  const convo = [{ role: 'system', content: systemPrompt(projectId, s.kopfTools) }, ...messages];
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  const lastText = typeof lastUser?.content === 'string' ? lastUser.content : (lastUser?.content || []).map((c) => c.text || '').join(' ');
+
+  // Schnellweg: „Licht an“ & Co. direkt schalten, ohne Sprachmodell
+  if (s.kopfTools) {
+    const q = await quick(lastText).catch(() => null);
+    if (q) {
+      emit('tool', { name: 'call_service', input: { entity_id: q.entity, service: q.service }, result: { ok: true, schnellweg: true } });
+      emit('delta', { text: q.reply });
+      return;
+    }
+  }
+  // Nur passende Werkzeuge mitschicken – das Modell muss so viel weniger lesen
+  const picked = s.kopfTools ? pickTools(lastText, toolsFor(Boolean(s.aiHomeControl))) : [];
+  const convo = [{ role: 'system', content: systemPrompt(projectId, picked.length > 0) }, ...messages];
 
   // Mit Werkzeugen: ohne Streaming, Schleife über tool_calls (OpenAI-Format, Ollama versteht das).
-  if (s.kopfTools) {
-    const tools = toolsFor(Boolean(s.aiHomeControl)).map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+  if (picked.length) {
+    const tools = picked.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
     try {
       for (let round = 0; round < 5; round++) {
         const res = await fetch(url, {

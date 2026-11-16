@@ -209,6 +209,11 @@ function espDevice(x, p, save, redraw) {
       h('button', { class: 'hud-btn', onclick: () => run('compile') }, icon('hammer'), 'Kompilieren'),
       h('button', { class: 'hud-btn', onclick: () => { if (confirm(`${x.friendly} per OTA flashen?`)) run('upload'); } }, icon('upload-network'), 'OTA-Update'),
       h('button', { class: 'hud-btn', onclick: () => run('logs') }, icon('text-box-outline'), 'Logs'),
+      h('button', { class: 'hud-btn', title: 'Pins prüfen + Verdrahtungsbild', onclick: async () => {
+        const yaml = await fetch('/api/esphome/config?configuration=' + encodeURIComponent(x.configuration)).then((r) => r.text());
+        (await import('./esptools.js')).pinDialog(yaml, x.friendly);
+      } }, icon('chip'), 'Pins'),
+      h('button', { class: 'hud-btn', title: 'Per USB flashen (Chrome/Edge)', onclick: async () => (await import('./esptools.js')).flashDialog({ configuration: x.configuration, friendly: x.friendly }) }, icon('usb'), 'USB'),
       h('button', { class: 'hud-btn icon', title: 'Stopp', onclick: () => ctrl?.abort() }, icon('stop'))),
     editor, consoleBox);
 }

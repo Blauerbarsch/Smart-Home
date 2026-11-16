@@ -4,6 +4,7 @@ import { settings, readJson, writeJson, id } from './store.js';
 import { q } from './db.js';
 import { ha } from './ha.js';
 import { mesh } from './mesh.js';
+import dns from 'node:dns/promises';
 
 const OPS = { '>': (a, b) => a > b, '<': (a, b) => a < b, '>=': (a, b) => a >= b, '<=': (a, b) => a <= b, '=': (a, b) => String(a) === String(b), '!=': (a, b) => String(a) !== String(b) };
 
@@ -139,6 +140,12 @@ class Alerts extends EventEmitter {
         body: JSON.stringify({ topic, title, message: text, tags: [level === 'ok' ? 'white_check_mark' : 'warning'], priority: level === 'ok' ? 3 : 4 }),
       }).then((r) => { if (!r.ok) throw new Error('ntfy ' + r.status); }));
     }
+    // Mesh: immer, oder nur wenn das Internet weg ist (Notfallkanal)
+    if (ch.includes('mesh') || (s.meshAlerts === 'always' && ch.length) || (s.meshAlerts === 'offline' && !(await internetUp()))) {
+      if (mesh.status.connected && s.meshGatewayId) {
+        tasks.push(Promise.resolve().then(() => mesh.send(`${level === 'ok' ? '✓' : '⚠'} ${title}: ${text}`.slice(0, 200), s.meshAlertTarget || 'all')));
+      }
+    }
     if ((ch.includes('kopf') || s.notifyKopf) && s.kopfOutputUrl) {
       tasks.push(fetch(s.kopfOutputUrl.replace(/\/$/, '') + '/speak', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: `${title}. ${text}` }) }));
     }
@@ -154,6 +161,18 @@ class Alerts extends EventEmitter {
   active() {
     return Object.entries(this.state).filter(([, s]) => s.firing).map(([key, s]) => ({ key, since: s.since }));
   }
+}
+
+let net = { ok: true, t: 0 };
+async function internetUp() {
+  if (Date.now() - net.t < 60000) return net.ok;
+  try {
+    await Promise.race([dns.resolve('github.com'), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 4000))]);
+    net = { ok: true, t: Date.now() };
+  } catch {
+    net = { ok: false, t: Date.now() };
+  }
+  return net.ok;
 }
 
 export const alerts = new Alerts();

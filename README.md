@@ -33,6 +33,28 @@ Docker-Container auf Unraid.
   Wandtablet-Modus mit Bildschirmschoner, Nachtdimmung, Bildschirm bleibt an.
 - **Update-Knopf**: zeigt neue Versionen an und aktualisiert den Container über die
   Unraid-API.
+- **Werkbank (v0.3)**: aktives Projekt wählen, dann per Sprache zu Kopf: „Notier: R3 auf
+  4,7k getauscht“ (mit Foto der Kopf-Kamera), „Was ist das für ein Bauteil?“,
+  „Timer 10 Minuten Kleber trocken“. Datenblätter (PDF) am Projekt liest die KI mit.
+- **ESP-Werkzeuge**: Firmware per USB direkt aus dem Browser flashen (esptool), serieller
+  Monitor, **Pin-Prüfung** der ESPHome-YAML (ADC2+WLAN, Strapping-, Nur-Eingangs-Pins,
+  Doppelbelegung) mit Schaltplan-Skizze und KI-Prüfung.
+- **Messen**: Messreihen von HA-Sensoren, Mesh-Nodes, **Modbus-TCP** und **SCPI**
+  (Labornetzteil, Multimeter) mit Min/Max/Mittel und Verbrauch (mAh/Wh).
+- **Lötstations-Wächter**: schaltet Lötkolben/Steckdose nach Leerlauf, Höchstdauer oder
+  wenn niemand mehr da ist ab; Absaugung läuft automatisch mit.
+- **3D-Druck**: STL/3MF/G-Code-Vorschau, G-Code an Klipper senden, Filament-Bestand,
+  **Gehäuse-Generator** (Box + Deckel als STL aus Platinenmaß).
+- **KiCad-Stückliste** aus dem Repo importieren, **Release-Center** für alle Repos.
+- **SPS-Kachel**: Modbus-Signale (S7 mit MB_SERVER, LOGO!) lesen und schalten.
+- **Mesh**: Reichweitentest mit Abdeckungskarte, **Energiebilanz** (Akku/Solar) je Node,
+  **Notfall-Befehle** per Mesh (`!status`, `!an`, `!aus`, `!wert`, `!alarme`), Alarme
+  bei Internetausfall übers Mesh.
+- **Kopf-Bewegungen**: Posen und Abläufe mit Live-Bild bearbeiten (head-body, Port 8300).
+- **Chronik**: alles, was im Haus, Mesh, Server, GitHub und in der Werkstatt passiert,
+  durchsuchbar – auch per Frage an die KI („Wann war die Hütte zuletzt unter 5 °C?“).
+- **Automationen per Chat**: „Wenn es in der Hütte unter 3 °C hat, Heizung an“ → KI
+  schreibt die HA-Automation, du prüfst und speicherst.
 - Als **App installierbar** (PWA) auf Android, iOS und Linux.
 
 Keine externen Node-Abhängigkeiten: Server und Oberfläche laufen mit Node 22 pur.
@@ -152,7 +174,8 @@ Kopf nutzt dafür die Agent-Schnittstelle `/api/agent/*` mit eigenem Schlüssel.
   über das Installieren-Symbol in der Adressleiste.
 
 Browser erlauben die Installation als App, den Service Worker und den Standort
-(„Mein Standort“ auf der Karte) nur über **HTTPS**. Am einfachsten: Nginx Proxy
+(„Mein Standort“ auf der Karte) sowie **USB-Flashen/serieller Monitor** (Web Serial,
+nur Chrome/Edge) nur über **HTTPS**. Am einfachsten: Nginx Proxy
 Manager oder SWAG auf Unraid mit einer lokalen Domain, oder `tailscale serve`.
 Für den Zugriff von unterwegs Tailscale/WireGuard nutzen und das Dashboard nicht
 offen ins Internet stellen – mindestens `APP_PASSWORD` setzen.
@@ -172,6 +195,10 @@ npm run dev          # mit Neustart bei Änderungen
 | `server/unraid.js` | Unraid-GraphQL-API (Container, VMs, Array, Update) |
 | `server/github.js` | Repo-Abgleich, Auto-Projekte, Repo-Details, Update-Prüfung |
 | `server/alerts.js`, `services.js` | Alarm-Regeln, Benachrichtigungen, Dienst-Checks |
+| `server/workbench.js` | Werkbank: Timer, Messungen, Wächter, Reichweite, Energie, Kopf-Körper |
+| `server/chronik.js`, `automations.js` | Chronik, HA-Automationen per KI |
+| `server/fieldbus.js` | Modbus TCP und SCPI ohne Abhängigkeiten |
+| `server/meshcmd.js` | Befehle über Mesh-Nachrichten |
 | `server/maker.js` | Uploads, Tagebuch, InvenTree, ESPHome, Moonraker |
 | `server/ha.js` | WebSocket-Verbindung zu Home Assistant |
 | `server/mqtt.js`, `server/mesh.js` | MQTT-Client und Meshtastic-Auswertung |

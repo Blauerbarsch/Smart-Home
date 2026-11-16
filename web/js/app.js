@@ -102,6 +102,7 @@ function connectEvents() {
     emit('mesh-text', m);
   });
   es.addEventListener('mesh-trace', (e) => emit('mesh-trace', JSON.parse(e.data)));
+  es.addEventListener('chronik', (e) => emit('chronik', JSON.parse(e.data)));
   es.addEventListener('alert', (e) => {
     const a = JSON.parse(e.data);
     S.activeAlerts = a.level === 'ok' ? S.activeAlerts.slice(1) : [...S.activeAlerts, { key: a.rule, since: a.ts }];
@@ -185,6 +186,10 @@ function route() {
     import('./workshop.js').then((m) => { if (S.current === tab) cleanup = m.renderWorkshop(view, sub); });
   } else if (type === 'server') {
     import('./server.js').then((m) => { if (S.current === tab) cleanup = m.renderServer(view, actions); });
+  } else if (type === 'chronik') {
+    import('./chronik-ui.js').then((m) => { if (S.current === tab) cleanup = m.renderChronik(view, actions); });
+  } else if (type === 'automations') {
+    import('./chronik-ui.js').then((m) => { if (S.current === tab) cleanup = m.renderAutomations(view, actions); });
   } else if (type === 'floorplan') {
     view.className = 'full';
     import('./floorplan.js').then((m) => { if (S.current === tab) cleanup = m.renderFloorplan(tab, view, actions); });

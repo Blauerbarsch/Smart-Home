@@ -110,7 +110,10 @@ textarea.hud-input { resize: vertical; min-height: 140px; line-height: 1.5; }
 @keyframes fadeLine { to { opacity: 1; } }
 
 .hud-mobile-tabs { display: none; }
-@media (max-width: 1250px) { .hud-grid { grid-template-columns: 240px minmax(0, 1fr) 340px; } .reactor { width: 130px; height: 130px; } .core-info .pname { font-size: 26px; } }
+@media (max-width: 1500px) { .hud-grid { grid-template-columns: 250px minmax(0, 1fr) 340px; } }
+.core { flex-wrap: wrap; }
+.core-info { min-width: 240px; }
+@media (max-width: 1250px) { .hud-grid { grid-template-columns: 220px minmax(0, 1fr) 300px; } .reactor { width: 130px; height: 130px; } .core-info .pname { font-size: 26px; } }
 @media (max-width: 950px) {
   .hud-inner { padding: 10px 10px calc(10px + var(--safe-b)); gap: 8px; grid-template-rows: auto auto 1fr; }
   .hud-top .hud-stats { display: none; }
@@ -150,3 +153,15 @@ textarea.hud-input { resize: vertical; min-height: 140px; line-height: 1.5; }
 .esp-console { background: #000; color: #9fe8b5; font-family: var(--mono); font-size: 11px; line-height: 1.45; max-height: 260px; overflow: auto; padding: 8px 10px; border-left: 2px solid rgb(var(--c-rgb)); white-space: pre-wrap; margin: 6px 0 0; }
 .esp-yaml { min-height: 300px; font-size: 12px; white-space: pre; tab-size: 2; }
 .dot-live { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+
+/* Werkbank */
+.hud-tools { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.hud-timers { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.hud-timers .hud-stat { text-transform: none; letter-spacing: 0.5px; font-family: var(--mono); }
+.hud-timers .x { background: none; border: 0; color: rgba(255, 255, 255, 0.5); padding: 0 0 0 4px; font-size: 14px; }
+.hud-top .clock { margin-left: 10px; }
+.measure { padding: 8px 0 10px; }
+.measure .spark { height: 60px; margin: 4px 0 6px; }
+.measure-new .hud-input { width: auto; flex: 1; min-width: 140px; }
+.hud label.hud-btn input { accent-color: rgb(var(--c-rgb)); }
+@media (max-width: 950px) { .hud-tools { margin-left: 0; } }

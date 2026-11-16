@@ -547,6 +547,49 @@ export const TILE_TYPES = {
         : [h('div', { class: 'empty' }, 'Noch keine Meldungen')])));
     },
   },
+  plc: {
+    label: 'SPS / Modbus', icon: 'expansion-card', desc: 'Werte einer SPS (S7-1200/1500 via MB_SERVER, LOGO! 8) oder eines Modbus-Geräts, Spulen schaltbar',
+    defaults: { w: 2, h: 2, port: 502, unit: 1, signals: [] },
+    fields: [
+      { key: 'title', label: 'Name', kind: 'text' }, { key: 'host', label: 'IP-Adresse', kind: 'text' },
+      { key: 'port', label: 'Port', kind: 'number' }, { key: 'unit', label: 'Unit-ID', kind: 'number' },
+      { key: 'signals', label: 'Signale', kind: 'signals', hint: 'Eine Zeile pro Signal: Name; Funktion (1 Spule, 2 Eingang, 3 Holding, 4 Input); Adresse; Typ (u16/i16/u32/i32/f32); Faktor; Einheit; schreibbar (ja/nein)' },
+      { key: 'refresh', label: 'Aktualisieren (s)', kind: 'number' },
+    ],
+    render(tile, el) {
+      const list = h('div', { class: 'list', style: { marginTop: '8px' } });
+      el.append(head('expansion-card', tile.title || 'SPS', tile.host || 'IP eintragen'), list);
+      if (!tile.host || !tile.signals?.length) return list.append(h('div', { class: 'empty' }, 'Bearbeiten → IP und Signale eintragen'));
+      const load = () => api('/tile-modbus/' + tile.id).then(({ values }) => {
+        list.replaceChildren(...tile.signals.map((sg, i) => {
+          const v = values[i];
+          const err = v && typeof v === 'object' ? v.error : null;
+          const bool = [1, 2].includes(Number(sg.fn));
+          return h('div', { class: 'list-item', title: err || '' }, icon(bool ? 'electric-switch' : 'numeric'), h('span', { class: 'grow' }, sg.label),
+            err ? h('span', { class: 'val', style: { color: 'var(--bad)' } }, '⚠')
+              : bool && sg.writable ? h('button', { class: 'toggle' + (v ? ' on' : ''), onclick: stop(async () => { await api(`/tile-modbus/${tile.id}/write`, { body: { index: i, value: v ? 0 : 1 } }).catch((e) => toast(e.message, true)); load(); }) })
+              : h('span', { class: 'val' }, bool ? (v ? 'EIN' : 'AUS') : `${v}${sg.unit ? ' ' + sg.unit : ''}`));
+        }));
+      }).catch((e) => list.replaceChildren(h('div', { class: 'empty' }, e.message)));
+      load();
+      const iv = setInterval(() => (el.isConnected ? load() : clearInterval(iv)), Math.max(2, tile.refresh || 5) * 1000);
+    },
+  },
+  chronik: {
+    label: 'Chronik', icon: 'timeline-text-outline', desc: 'Die letzten Ereignisse aus Haus, Mesh, Server und Werkstatt',
+    defaults: { w: 2, h: 2 },
+    deps: () => ['chronik'],
+    fields: [{ key: 'title', label: 'Titel', kind: 'text' }, { key: 'source', label: 'Nur', kind: 'select', options: [['', 'Alles'], ['haus', 'Haus'], ['mesh', 'Mesh'], ['server', 'Server'], ['werkstatt', 'Werkstatt'], ['github', 'GitHub'], ['alarm', 'Alarme']] }],
+    render(tile, el) {
+      el.classList.add('clickable');
+      el.addEventListener('click', () => !S.editing && (location.hash = '#chronik'));
+      const list = h('div', { class: 'list', style: { marginTop: '10px' } });
+      el.append(head('timeline-text-outline', tile.title || 'Chronik'), list);
+      api(`/chronik?days=7&limit=20&source=${tile.source || ''}`).then((d) => list.replaceChildren(...(d.entries.length ? d.entries.map((e) =>
+        h('div', { class: 'list-item' }, icon(e.icon || 'circle-small'), h('span', { class: 'grow', title: e.detail || '' }, e.title), h('span', { class: 'val' }, new Date(e.ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }))))
+        : [h('div', { class: 'empty' }, 'Noch nichts passiert')])));
+    },
+  },
   esphome: {
     label: 'ESPHome-Geräte', icon: 'chip', desc: 'Geräte aus deinem ESPHome-Dashboard',
     defaults: { w: 2, h: 2 },

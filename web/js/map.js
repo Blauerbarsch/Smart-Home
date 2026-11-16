@@ -34,8 +34,9 @@ export function renderMap(view, actions) {
     L = lib;
     map = L.map(mapEl, { zoomControl: true, attributionControl: true }).setView([51.16, 10.45], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
-    layers = { sites: L.layerGroup().addTo(map), ha: L.layerGroup().addTo(map), mesh: L.layerGroup().addTo(map), links: L.layerGroup().addTo(map), track: L.layerGroup().addTo(map) };
-    L.control.layers(null, { Standorte: layers.sites, 'HA-Zonen & Personen': layers.ha, 'Mesh-Nodes': layers.mesh, 'Mesh-Verbindungen': layers.links }, { position: 'topright' }).addTo(map);
+    layers = { sites: L.layerGroup().addTo(map), ha: L.layerGroup().addTo(map), mesh: L.layerGroup().addTo(map), links: L.layerGroup().addTo(map), track: L.layerGroup().addTo(map), coverage: L.layerGroup(), range: L.layerGroup().addTo(map) };
+    L.control.layers(null, { Standorte: layers.sites, 'HA-Zonen & Personen': layers.ha, 'Mesh-Nodes': layers.mesh, 'Mesh-Verbindungen': layers.links, 'Funk-Abdeckung': layers.coverage, Reichweitentest: layers.range }, { position: 'topright' }).addTo(map);
+    map.on('overlayadd', (e) => { if (e.layer === layers.coverage) drawCoverage(); });
     map.on('click', (e) => { if (pickMode) { pickMode(e.latlng.lat, e.latlng.lng); pickMode = null; hint.remove(); } });
     drawAll();
     fitAll();
@@ -144,10 +145,16 @@ export function renderMap(view, actions) {
       h('div', { class: 'tile-sub', style: { marginBottom: '10px' } }, [n.id, n.hwName || (n.hw !== undefined && `HW ${n.hw}`), n.role, n.firmware && `FW ${n.firmware}`, n.source === 'mqtt' ? 'über MQTT' : 'per Funk', n.via && `Gateway ${nodeName(S.mesh.nodes.get(n.via)) || n.via}`, `zuletzt ${ago(n.lastSeen)}`, n.lat && `${n.lat.toFixed(5)}, ${n.lon.toFixed(5)}`, n.alt !== undefined && `${n.alt} m`].filter(Boolean).join(' · ')),
       field('Eigener Name', alias),
       h('div', { class: 'node-card', style: { background: 'none', border: 0, padding: 0 } }, h('div', { class: 'meta' }, nodeMeta(n))),
-      charts.children.length ? charts : h('div', { class: 'empty' }, 'Noch kein Verlauf – kommt mit der nächsten Telemetrie.')), {
+      charts.children.length ? charts : h('div', { class: 'empty' }, 'Noch kein Verlauf – kommt mit der nächsten Telemetrie.'),
+      energyBox(id)), {
       actions: (close) => [
         h('button', { class: 'btn danger', onclick: async () => { if (!confirm('Node vergessen?')) return; await api(`/mesh/node/${encodeURIComponent(id)}`, { method: 'DELETE' }); S.mesh.nodes.delete(id); close(); drawMesh(); drawSide(); } }, icon('delete-outline')),
         track ? h('button', { class: 'btn', onclick: () => { close(); showTrack(hist.track); } }, icon('map-marker-path'), 'Spur') : null,
+        h('button', { class: 'btn', title: 'Reichweitentest mit diesem Node starten', onclick: async () => {
+          const t = await api('/mesh/rangetest', { body: { node: id, name: `${nodeName(n)} ${new Date().toLocaleDateString('de-DE')}` } });
+          toast('Test läuft – mit dem Node losgehen/-fahren, danach in „Analyse“ beenden');
+          close(); panel = S.mapPanel = 'analysis'; drawSide();
+        } }, icon('map-marker-distance'), 'Reichweitentest'),
         h('button', { class: 'btn primary', onclick: async () => {
           await api(`/mesh/node/${encodeURIComponent(id)}`, { method: 'PUT', body: { alias: alias.value } });
           n.alias = alias.value; close(); drawSide(); drawMesh();
@@ -209,6 +216,66 @@ export function renderMap(view, actions) {
     function reopen() { editSite(Object.assign(orig ? structuredClone(orig) : {}, s)); }
   }
 
+  // ---------- Energiebilanz eines Nodes ----------
+  function energyBox(id) {
+    const box = h('div', { class: 'site-card', style: { marginTop: '10px' } }, h('h4', {}, icon('solar-power-variant-outline'), ' Energiebilanz'), h('div', { class: 'tile-sub' }, 'Rechne …'));
+    const draw = async () => {
+      const e = await api(`/mesh/energy/${encodeURIComponent(id)}?days=7`);
+      const m = e.meta || {};
+      const inp = (k, ph) => h('input', { class: 'input', type: 'number', value: m[k] ?? '', placeholder: ph, style: { flex: '0 0 120px' }, onchange: async (ev) => { await api(`/mesh/node/${encodeURIComponent(id)}/meta`, { method: 'PUT', body: { [k]: Number(ev.target.value) || null } }); draw(); } });
+      const f = (v, d = 1) => (v == null ? '–' : Number(v).toFixed(d));
+      box.replaceChildren(h('h4', {}, icon('solar-power-variant-outline'), ' Energiebilanz (7 Tage)'),
+        e.enough ? h('div', {},
+          h('div', { class: 'charts' },
+            h('div', { class: 'chart-box' }, h('div', { class: 'lbl' }, 'Nachts', h('b', {}, `${f(e.nightRate, 2)} %/h`))),
+            h('div', { class: 'chart-box' }, h('div', { class: 'lbl' }, 'Tagsüber', h('b', {}, `${f(e.dayRate, 2)} %/h`))),
+            h('div', { class: 'chart-box' }, h('div', { class: 'lbl' }, 'Pro Tag netto', h('b', {}, `${f(e.dailyNet)} %`))),
+            h('div', { class: 'chart-box' }, h('div', { class: 'lbl' }, 'Reserve ohne Sonne', h('b', {}, e.reserveDays ? `${f(e.reserveDays)} Tage` : '–')))),
+          e.avgCurrent_mA ? h('div', { class: 'tile-sub', style: { marginTop: '6px' } }, `≈ ${f(e.avgCurrent_mA)} mA Durchschnittsverbrauch (${f(e.mAhPerDay, 0)} mAh/Tag)`) : null,
+          h('p', { style: { margin: '8px 0' } }, e.verdict))
+          : h('div', { class: 'tile-sub' }, 'Noch zu wenig Akkuwerte. Braucht ein paar Tage Telemetrie.'),
+        h('div', { class: 'row', style: { alignItems: 'center', flexWrap: 'wrap' } }, h('span', { class: 'tile-sub', style: { flex: '0 0 auto' } }, 'Akku'), inp('battery_mAh', 'mAh'), h('span', { class: 'tile-sub', style: { flex: '0 0 auto' } }, 'Panel'), inp('panel_W', 'Watt')));
+    };
+    draw().catch((er) => box.append(h('div', { class: 'tile-sub' }, er.message)));
+    return box;
+  }
+
+  // ---------- Abdeckung + Reichweitentests ----------
+  const snrColor = (snr) => (snr == null ? '#8193a8' : snr > 5 ? '#3ddc97' : snr > 0 ? '#a3e635' : snr > -7 ? '#ffb547' : '#ff5d6c');
+  async function drawCoverage() {
+    layers.coverage.clearLayers();
+    const pts = await api('/mesh/coverage?days=60').catch(() => []);
+    for (const c of pts) L.rectangle([[c.lat - 0.001, c.lon - 0.0015], [c.lat + 0.001, c.lon + 0.0015]], { color: snrColor(c.best), weight: 0, fillOpacity: 0.45 })
+      .addTo(layers.coverage).bindTooltip(`${c.n} Pakete direkt empfangen · bestes SNR ${c.best} dB · Ø ${c.avg} dB`);
+    if (!pts.length) toast('Noch keine Daten für die Abdeckung (braucht Positionen + direkt empfangene Pakete)');
+  }
+  async function showRange(t) {
+    const d = await api('/mesh/rangetest/' + t.id);
+    layers.range.clearLayers();
+    const ll = [];
+    for (const p of d.points) {
+      ll.push([p.lat, p.lon]);
+      L.circleMarker([p.lat, p.lon], { radius: 7, color: '#000', weight: 1, fillColor: snrColor(p.snr), fillOpacity: p.snr == null ? 0.35 : 0.95 })
+        .addTo(layers.range).bindTooltip(`${new Date(p.ts).toLocaleTimeString('de-DE')} · ${p.snr == null ? 'nicht empfangen' : `SNR ${p.snr} dB · RSSI ${p.rssi} dBm · ${p.hops ?? '?'} Hops`}`);
+    }
+    if (ll.length > 1) L.polyline(ll, { color: '#ffffff', weight: 1, opacity: 0.4, dashArray: '3 5' }).addTo(layers.range);
+    if (ll.length) map.fitBounds(ll, { padding: [40, 40], maxZoom: 16 });
+    return d;
+  }
+  async function rangeSection(body) {
+    const wbData = await api('/workbench');
+    const tests = wbData.rangeTests.slice().reverse();
+    const box = h('div', { class: 'site-card' }, h('h4', {}, 'Reichweitentests'),
+      tests.length ? h('div', { class: 'list' }, tests.map((t) => h('div', { class: 'list-item' },
+        h('span', { class: 'fresh', style: { background: t.end ? 'var(--muted)' : 'var(--ok)' } }),
+        h('span', { class: 'grow', style: { cursor: 'pointer' }, onclick: async () => { const d = await showRange(t); toast(`${d.points.length} Punkte · ${d.packets} Pakete${d.maxDist ? ` · max. ${(d.maxDist / 1000).toFixed(2)} km` : ''}`); } }, t.name, h('div', { class: 'tile-sub' }, t.end ? `${Math.round((t.end - t.start) / 60000)} min` : 'läuft …')),
+        !t.end ? h('button', { class: 'btn sm', onclick: async () => { await api(`/mesh/rangetest/${t.id}/stop`, { body: {} }); drawSide(); } }, icon('stop'), 'Beenden') : null,
+        h('button', { class: 'btn icon sm', onclick: async () => { if (confirm('Test löschen?')) { await api('/mesh/rangetest/' + t.id, { method: 'DELETE' }); layers.range.clearLayers(); drawSide(); } } }, icon('delete-outline')))))
+        : h('div', { class: 'tile-sub' }, 'Start im Node-Detail („Reichweitentest“): Node mitnehmen, die Punkte erscheinen farbig nach Empfangsqualität.'),
+      h('div', { class: 'row', style: { marginTop: '8px' } }, h('button', { class: 'btn sm', onclick: () => { map.addLayer(layers.coverage); drawCoverage(); } }, icon('signal'), 'Abdeckung zeigen')));
+    body.append(box);
+  }
+
   // ---------- Netz-Analyse ----------
   async function drawAnalysis(body) {
     body.append(h('div', { class: 'empty' }, 'Lade Statistik …'));
@@ -237,6 +304,7 @@ export function renderMap(view, actions) {
       } }, h('span', { class: 'grow' }, `${nn(l.a)} ↔ ${nn(l.b)}`), h('span', { class: 'val' }, `${(l.dist / 1000).toFixed(1)} km${l.snr != null ? ' · ' + l.snr + ' dB' : ''}`))))) : null,
       h('div', { class: 'site-card' }, h('h4', {}, 'Traceroutes'), h('div', { class: 'list', id: 'traces' }, h('div', { class: 'empty' }, '…'))),
     );
+    rangeSection(body).catch(() => {});
     api('/mesh/traces').then((ts) => {
       const box = body.querySelector('#traces');
       if (!box) return;

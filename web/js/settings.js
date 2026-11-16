@@ -42,7 +42,7 @@ export function renderSettings(view, rerender) {
       h('button', { class: 'btn icon sm', title: t.hidden ? 'Einblenden' : 'Ausblenden', onclick: () => { t.hidden = !t.hidden; commit(); } }, icon(t.hidden ? 'eye-off-outline' : 'eye-outline')),
       ['grid', 'floorplan'].includes(t.type || 'grid')
         ? h('button', { class: 'btn icon sm danger', title: 'Löschen', onclick: () => { if (confirm(`Reiter „${t.name}“ mit allen Kacheln löschen?`)) { S.tabs.splice(i, 1); commit(); } } }, icon('delete-outline'))
-        : h('span', { class: 'chip', style: { width: '80px', justifyContent: 'center' } }, ({ map: 'Karte', workshop: 'Werkstatt', server: 'Server', floorplan: 'Grundriss' })[t.type] || t.type))));
+        : h('span', { class: 'chip', style: { width: '80px', justifyContent: 'center' } }, ({ map: 'Karte', workshop: 'Werkstatt', server: 'Server', floorplan: 'Grundriss', chronik: 'Chronik', automations: 'Automationen' })[t.type] || t.type))));
   };
   const commit = () => { saveLayout(); drawTabs(); rerender(); };
   drawTabs();
@@ -74,6 +74,7 @@ export function renderSettings(view, rerender) {
       h('div', { class: 'row' }, f('Anthropic-API-Key', 'anthropicKey', { type: 'password' }, 'console.anthropic.com → API Keys'), f('Claude-Modell', 'claudeModel', {}, 'z. B. claude-sonnet-5-5, claude-opus-5-5, claude-haiku-5-5')),
       f('Kopf: head-brain', 'kopfUrl', { placeholder: 'http://192.168.1.20:8100' }, 'OpenAI-kompatible API deines Kopfs. Der Port muss vom Unraid-Server aus erreichbar sein (siehe README).'),
       h('div', { class: 'row' }, f('Kopf: head-output (Sprache)', 'kopfOutputUrl', { placeholder: 'http://192.168.1.20:8600' }), f('Kopf: head-vision (Kamera)', 'kopfVisionUrl', { placeholder: 'http://192.168.1.20:8400' })),
+      f('Kopf: head-body (Bewegungen)', 'kopfBodyUrl', { placeholder: 'http://192.168.1.20:8300' }, 'Für den Bewegungs-Editor in der Werkstatt und Abläufe wie „Nicken“.'),
       h('div', { class: 'row' }, f('Kopf-Modellname', 'kopfModel'), sel('Kopf bekommt Werkzeuge', 'kopfTools', [['true', 'Ja (Haus, Server, Mesh, Projekte)'], ['false', 'Nein, nur Gespräch']])),
       kopfVoiceBox()),
     card('radio-tower', 'Meshtastic (MQTT)', h('div', { style: { marginBottom: '12px' } }, meshChip),
@@ -82,6 +83,9 @@ export function renderSettings(view, rerender) {
       f('Topics', 'meshTopic', {}, 'Kommagetrennt, Standard: msh/#'),
       h('div', { class: 'row' }, f('Gateway-Node (zum Senden)', 'meshGatewayId', { placeholder: '!a1b2c3d4' }), f('Kanal-Index', 'meshChannel', { type: 'number' })),
       f('Sende-Topic (optional)', 'meshSendTopic', { placeholder: 'msh/EU_868/2/json/mqtt/' }, 'Leer = wird aus empfangenen Topics abgeleitet. Downlink im Kanal muss aktiv sein.'),
+      sel('Alarme ins Mesh senden', 'meshAlerts', [['offline', 'Nur wenn das Internet ausfällt (Notfallkanal)'], ['always', 'Immer zusätzlich'], ['never', 'Nie']]),
+      h('div', { class: 'row' }, f('Alarme an', 'meshAlertTarget', { placeholder: 'all oder !a1b2c3d4' }, '„all“ = Kanal, sonst Node-ID für Direktnachricht'),
+        f('Befehle erlaubt von', 'meshCommandNodes', { placeholder: '!a1b2c3d4, !e5f6a7b8' }, 'Diese Nodes dürfen per Mesh-Nachricht steuern: !status !an … !aus … !wert … !alarme')),
       f('Kanal-Schlüssel (für verschlüsselte Kanäle)', 'meshKeys', { type: 'password', placeholder: 'Privat=base64schluessel; Familie=AQ==' }, 'Der Standardkanal LongFast wird automatisch entschlüsselt. Eigene Kanäle: Name=PSK (Base64, wie in der App unter Kanäle).')),
     h('div', { class: 'modal-actions', style: { justifyContent: 'flex-start', marginTop: 0 } }, h('button', { class: 'btn primary', onclick: save }, icon('content-save'), 'Speichern')),
     card('server', 'Unraid', f('Adresse des Unraid-Servers', 'unraidUrl', { placeholder: 'http://192.168.188.175' }),
@@ -97,6 +101,7 @@ export function renderSettings(view, rerender) {
       sel('Kopf spricht Alarme aus', 'notifyKopf', [['false', 'Nein'], ['true', 'Ja']]),
       h('div', { class: 'row' }, h('button', { class: 'btn', onclick: async () => { await save(); await api('/alerts/test', { body: { channels: ['browser', 'ha', 'ntfy', 'kopf'] } }).then(() => toast('Test gesendet')).catch((e) => toast(e.message, true)); } }, icon('send'), 'Test senden'))),
     rulesCard(),
+    guardCard(),
     card('package-variant-closed', 'Teilelager (InvenTree)', h('div', { class: 'row' }, f('Adresse', 'inventreeUrl', { placeholder: 'http://192.168.188.175:1337' }), f('API-Token', 'inventreeToken', { type: 'password' }, 'InvenTree → Einstellungen → API-Token'))),
     h('div', { class: 'modal-actions', style: { justifyContent: 'flex-start', marginTop: 0 } }, h('button', { class: 'btn primary', onclick: save }, icon('content-save'), 'Speichern')),
     deviceCard(),
@@ -109,6 +114,8 @@ export function renderSettings(view, rerender) {
       h('button', { class: 'btn', onclick: () => { S.tabs.push({ id: uid(), name: 'Neuer Reiter', icon: 'view-dashboard-outline', type: 'grid', tiles: [] }); commit(); } }, icon('plus'), 'Kachel-Reiter'),
       h('button', { class: 'btn', onclick: () => { S.tabs.push({ id: uid(), name: 'Grundriss', icon: 'floor-plan', type: 'floorplan', markers: [] }); commit(); } }, icon('plus'), 'Grundriss'),
       h('button', { class: 'btn', onclick: () => { S.tabs.push({ id: uid(), name: 'Karte', icon: 'map', type: 'map' }); commit(); } }, icon('plus'), 'Karte'),
+      ...[['chronik', 'Chronik', 'timeline-text-outline'], ['automations', 'Automationen', 'robot']].filter(([ty]) => !S.tabs.some((t) => t.type === ty)).map(([ty, n, ic]) =>
+        h('button', { class: 'btn', onclick: () => { S.tabs.push({ id: uid(), name: n, icon: ic, type: ty }); commit(); } }, icon('plus'), n)),
       !S.tabs.some((t) => t.type === 'server') ? h('button', { class: 'btn', onclick: () => { S.tabs.push({ id: uid(), name: 'Server', icon: 'server', type: 'server' }); commit(); } }, icon('plus'), 'Server') : null)),
     card('cellphone-link', 'App installieren', h('div', { class: 'note-text' },
       'Handy (Android/iOS): Seite im Browser öffnen → Menü → „Zum Startbildschirm hinzufügen“.\n' +
@@ -213,4 +220,30 @@ function kopfVoiceBox() {
         code.textContent = cmd();
       } }, icon('key-change'))),
     h('div', { class: 'hint' }, 'Erlaubt sind dieselben Werkzeuge wie für Claude; Schalten nur, wenn „KI darf Smart Home steuern“ an ist.'));
+}
+
+
+// ---------- Werkstatt-Wächter ----------
+function guardCard() {
+  const box = h('div', {}, h('div', { class: 'empty' }, 'Lade …'));
+  api('/workbench').then(({ guard: g }) => {
+    const ent = (key, label, domains, hint) => {
+      const lbl = h('span', {}, g[key] ? friendly(S.states.get(g[key]), g[key]) : 'wählen …');
+      return field(label, h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn', style: { justifyContent: 'flex-start' }, onclick: async () => { const id = await pickEntity({ domains }); if (id) { g[key] = id; lbl.textContent = friendly(S.states.get(id), id); } } }, icon('magnify'), lbl),
+        h('button', { type: 'button', class: 'btn icon', style: { flex: '0 0 auto' }, onclick: () => { g[key] = ''; lbl.textContent = 'wählen …'; } }, icon('close'))), hint);
+    };
+    const num = (key, label) => field(label, h('input', { class: 'input', type: 'number', value: g[key], oninput: (e) => (g[key] = Number(e.target.value)) }));
+    box.replaceChildren(
+      h('label', { class: 'row', style: { alignItems: 'center', gap: '8px', marginBottom: '12px' } }, h('input', { type: 'checkbox', checked: g.enabled, style: { flex: 'none' }, onchange: (e) => (g.enabled = e.target.checked) }), 'Wächter aktiv'),
+      ent('iron', 'Lötstation (smarte Steckdose)', ['switch', 'light', 'input_boolean']),
+      ent('power', 'Leistung der Lötstation (optional)', ['sensor'], 'Mit Leistungsmessung erkennt der Wächter Leerlauf: Lötkolben hält nur noch Temperatur.'),
+      h('div', { class: 'row' }, num('idleWatts', 'Leerlauf unter (W)'), num('idleMinutes', 'Leerlauf länger als (min)'), num('maxMinutes', 'Spätestens aus nach (min)')),
+      ent('fan', 'Absaugung (läuft automatisch mit)', ['switch', 'fan', 'light']),
+      num('fanAfterMinutes', 'Absaugung läuft nach (min)'),
+      ent('person', 'Person (Verlassen-Warnung)', ['person', 'device_tracker']),
+      h('label', { class: 'row', style: { alignItems: 'center', gap: '8px', marginBottom: '12px' } }, h('input', { type: 'checkbox', checked: g.offOnLeave, style: { flex: 'none' }, onchange: (e) => (g.offOnLeave = e.target.checked) }), 'Beim Verlassen automatisch ausschalten (sonst nur warnen)'),
+      h('button', { class: 'btn primary', onclick: async () => { await api('/workbench/guard', { method: 'PUT', body: g }); toast('Wächter gespeichert'); } }, icon('content-save'), 'Speichern'));
+  });
+  return h('div', { class: 'card' }, h('h3', {}, icon('soldering-iron'), 'Werkstatt-Wächter'), box);
 }

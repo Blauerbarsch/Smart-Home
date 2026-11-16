@@ -4,9 +4,11 @@ import { pickEntity, pickMeshNode } from './editor.js';
 import { nodeName } from './tiles.js';
 import { startBackground } from './hud-bg.js';
 import { githubTab, diaryTab, resourcesTab, esphomeTab, partsStock, linkPart, reposPanel, repoSummary, resourceStatus } from './workshop-extra.js';
+import { identifyDialog, timerWidget, measureTab, printTab, docsTab, releasesPanel, bodyEditor, filamentDialog } from './workbench-ui.js';
 
 const STATUS = { idea: 'Idee', active: 'In Arbeit', paused: 'Pausiert', done: 'Fertig' };
-const TABS = [['overview', 'Übersicht'], ['tasks', 'Aufgaben'], ['diary', 'Tagebuch'], ['parts', 'Teile'], ['notes', 'Notizen'], ['github', 'GitHub'], ['server', 'Server'], ['esphome', 'ESPHome'], ['sensors', 'Sensoren'], ['links', 'Links']];
+const TABS = [['overview', 'Übersicht'], ['tasks', 'Aufgaben'], ['diary', 'Tagebuch'], ['parts', 'Teile'], ['notes', 'Notizen'], ['docs', 'Doku'], ['esphome', 'ESPHome'], ['measure', 'Messen'], ['print', '3D-Druck'], ['github', 'GitHub'], ['server', 'Server'], ['sensors', 'Sensoren'], ['links', 'Links']];
+const chatState = { includeDocs: false };
 const general = { chat: [] };
 
 // ---------- Mini-Markdown (sicher: erst escapen) ----------
@@ -68,7 +70,13 @@ export function renderWorkshop(view, initialId) {
   applyMobile();
 
   root.append(h('div', { class: 'hud-inner' },
-    h('div', { class: 'hud-top' }, h('span', { class: 'title' }, h('span', { class: 'blink' }), 'Werkstatt'), stats, clock),
+    h('div', { class: 'hud-top' }, h('span', { class: 'title' }, h('span', { class: 'blink' }), 'Werkstatt'), stats,
+      h('div', { class: 'hud-tools' }, timerWidget(),
+        h('button', { class: 'hud-btn icon', title: 'Bauteil erkennen', onclick: () => identifyDialog(sel, () => save(), () => drawCenter()) }, icon('magnify-scan')),
+        h('button', { class: 'hud-btn icon', title: 'Serieller Monitor', onclick: () => import('./esptools.js').then((m) => m.serialMonitor()) }, icon('console')),
+        h('button', { class: 'hud-btn icon', title: 'Filament-Lager', onclick: filamentDialog }, icon('printer-3d-nozzle-outline')),
+        S.settings.kopfBodyUrl ? h('button', { class: 'hud-btn icon', title: 'Kopf bewegen', onclick: bodyEditor }, icon('robot-outline')) : null),
+      clock),
     mtabs,
     h('div', { class: 'hud-grid' }, left, center, right)));
   view.append(root);
@@ -107,8 +115,12 @@ export function renderWorkshop(view, initialId) {
 
   // ---------- Links: Projektliste ----------
   function drawLeft() {
-    const modeSwitch = h('div', { style: { display: 'flex', gap: '4px' } }, [['projects', 'Projekte'], ['repos', 'Repos']].map(([k, l]) =>
+    const modeSwitch = h('div', { style: { display: 'flex', gap: '4px' } }, [['projects', 'Projekte'], ['repos', 'Repos'], ['releases', 'Releases']].map(([k, l]) =>
       h('button', { class: 'hud-btn' + (leftMode === k ? ' on' : ''), onclick: () => { leftMode = k; drawLeft(); } }, l)));
+    if (leftMode === 'releases') {
+      left.replaceChildren(h('div', { class: 'hud-h' }, modeSwitch), releasesPanel());
+      return;
+    }
     if (leftMode === 'repos') {
       const { body, syncBtn } = reposPanel((p) => { leftMode = 'projects'; select(p); mobile = 'center'; drawMtabs(); applyMobile(); });
       left.replaceChildren(h('div', { class: 'hud-h' }, modeSwitch, h('span', { class: 'spacer' }), syncBtn), body);
@@ -136,6 +148,7 @@ export function renderWorkshop(view, initialId) {
   function select(p) {
     sel = p;
     S.workshopSel = p?.id;
+    api('/workbench/active', { body: { project: p?.id || null } }).catch(() => {});
     history.replaceState(null, '', p ? `#workshop/${p.id}` : '#workshop');
     drawLeft();
     drawCenter();
@@ -203,6 +216,12 @@ export function renderWorkshop(view, initialId) {
         }))] : null,
         p.repo ? repoSummary(p) : null,
         p.notes ? [h('div', { class: 'hud-h', style: { padding: '14px 0 6px', border: 0 } }, 'Notizen'), h('div', { class: 'md', html: md(p.notes.slice(0, 1200)) })] : null);
+    } else if (ptab === 'measure') {
+      measureTab(p, add);
+    } else if (ptab === 'print') {
+      printTab(p, add, save, drawCenter);
+    } else if (ptab === 'docs') {
+      docsTab(p, add, save, drawCenter, chatState);
     } else if (ptab === 'github') {
       githubTab(p, add, md, save, drawCenter);
     } else if (ptab === 'diary') {
@@ -225,7 +244,8 @@ export function renderWorkshop(view, initialId) {
       const qty = h('input', { class: 'hud-input', type: 'number', value: 1, style: { width: '70px' } });
       const addPart = () => { if (!name.value.trim()) return; p.parts.push({ id: Math.random().toString(36).slice(2, 9), name: name.value.trim(), qty: Number(qty.value) || 1, have: false }); save(); drawCenter(); };
       name.onkeydown = (e) => e.key === 'Enter' && addPart();
-      add(h('div', { style: { display: 'flex', gap: '6px' } }, name, qty, h('button', { class: 'hud-btn', onclick: addPart }, icon('plus'))),
+      add(h('div', { style: { display: 'flex', gap: '6px' } }, name, qty, h('button', { class: 'hud-btn', onclick: addPart }, icon('plus')),
+          h('button', { class: 'hud-btn', title: 'Bauteil per Foto erkennen', onclick: () => identifyDialog(p, save, drawCenter) }, icon('magnify-scan'))),
         (partsBox = h('div', { style: { marginTop: '8px' } }, p.parts.map((x, i) => h('div', { class: 'task' + (x.have ? ' done' : '') },
           h('button', { class: 'chk', title: 'vorhanden', onclick: () => { x.have = !x.have; save(); drawCenter(); } }, x.have ? '✓' : ''),
           h('span', { class: 't' }, `${x.qty}× ${x.name}`),
@@ -347,7 +367,7 @@ export function renderWorkshop(view, initialId) {
     let touchedProject = false;
     try {
       const history = c.slice(0, -1).slice(-20).map(({ role, content }) => ({ role, content }));
-      await apiStream('/ai/chat', { provider, messages: history, projectId: project?.id }, (ev, data) => {
+      await apiStream('/ai/chat', { provider, messages: history, projectId: project?.id, includeDocs: chatState.includeDocs && provider === 'claude' }, (ev, data) => {
         if (ev === 'delta') { reply.content += data.text; raf ||= requestAnimationFrame(paint); }
         else if (ev === 'tool') {
           const label = data.name === 'call_service' ? `${data.input.domain}.${data.input.service} ${data.input.entity_id || ''}` : data.name.replace(/_/g, ' ');

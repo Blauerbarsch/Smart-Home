@@ -67,6 +67,7 @@ class GitHub extends EventEmitter {
     const list = s.githubToken
       ? await this.api('/user/repos?per_page=100&affiliation=owner&sort=pushed')
       : await this.api(`/users/${encodeURIComponent(s.githubUser)}/repos?per_page=100&sort=pushed`);
+    const before = Object.fromEntries(this.repos.map((r) => [r.full_name, r.pushed_at]));
     this.repos = (list || []).map((r) => ({
       full_name: r.full_name, name: r.name, description: r.description, private: r.private, fork: r.fork, archived: r.archived,
       language: r.language, topics: r.topics || [], stars: r.stargazers_count, open_issues: r.open_issues_count,
@@ -74,6 +75,9 @@ class GitHub extends EventEmitter {
     }));
     this.synced = Date.now();
     this.error = '';
+    for (const r of this.repos) {
+      if (before[r.full_name] && before[r.full_name] !== r.pushed_at) this.emit('pushed', r);
+    }
     let created = 0;
     if (s.githubAutoProjects !== false) {
       for (const r of this.repos) {
@@ -149,6 +153,28 @@ class GitHub extends EventEmitter {
     };
     this.cache.set(fullName, { t: Date.now(), data });
     return data;
+  }
+
+  /** Releases aller Repos mit Dateien (APKs, Firmware …), 30 Minuten gecached. */
+  async releases() {
+    if (this.relCache && Date.now() - this.relCache.t < 30 * 60e3) return this.relCache.data;
+    const out = [];
+    await Promise.all(this.repos.filter((r) => !r.fork).map(async (r) => {
+      try {
+        const list = await this.api(`/repos/${r.full_name}/releases?per_page=3`);
+        for (const rel of list || []) {
+          if (rel.draft) continue;
+          out.push({
+            repo: r.full_name, name: rel.name || rel.tag_name, tag: rel.tag_name, date: rel.published_at, url: rel.html_url, prerelease: rel.prerelease,
+            notes: (rel.body || '').slice(0, 1500),
+            assets: (rel.assets || []).map((a) => ({ name: a.name, url: a.browser_download_url, size: a.size, downloads: a.download_count })),
+          });
+        }
+      } catch {}
+    }));
+    out.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+    this.relCache = { t: Date.now(), data: out };
+    return out;
   }
 
   /** Neuere Dashboard-Version auf GitHub? Vergleicht den eingebauten Commit mit main. */

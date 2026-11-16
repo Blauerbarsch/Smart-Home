@@ -109,6 +109,7 @@ export function renderGrid(tab, view) {
     on('projects', () => tab.tiles.filter((t) => tileDeps(t).includes('projects')).forEach(replace)),
     on('unraid', () => tab.tiles.filter((t) => tileDeps(t).includes('unraid')).forEach(replace)),
     on('services', () => tab.tiles.filter((t) => tileDeps(t).includes('services') || (t.type === 'app' && t.check)).forEach(replace)),
+    on('chronik', () => tab.tiles.filter((t) => tileDeps(t).includes('chronik')).forEach(replace)),
     on('notifications-changed', () => tab.tiles.filter((t) => tileDeps(t).includes('alerts')).forEach(replace)),
     on('snapshot', draw),
     on('edit', draw),

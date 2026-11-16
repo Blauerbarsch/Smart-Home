@@ -9,10 +9,13 @@ import { q } from './db.js';
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg', 'application/pdf': 'pdf' };
+const FILE_EXT = ['stl', '3mf', 'gcode', 'step', 'stp', 'pdf', 'jpg', 'jpeg', 'png', 'webp', 'bin', 'yaml'];
 
-export function saveUpload(buf, type) {
-  const ext = EXT[type];
-  if (!ext) throw new Error('Dateityp nicht erlaubt (Bilder oder PDF)');
+export function saveUpload(buf, type, filename = '') {
+  let ext = EXT[type];
+  const fe = String(filename).split('.').pop().toLowerCase();
+  if (FILE_EXT.includes(fe)) ext = fe === 'jpeg' ? 'jpg' : fe;
+  if (!ext) throw new Error('Dateityp nicht erlaubt (Bilder, PDF, STL, 3MF, G-Code, STEP)');
   const name = crypto.randomBytes(8).toString('hex') + '.' + ext;
   fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
   return '/api/uploads/' + name;
@@ -156,4 +159,50 @@ export async function printerSnapshot(tileId) {
   const cam = tile?.camera || (tile?.url && tile.url.replace(/:\d+\/?$/, '').replace(/\/$/, '') + '/webcam/?action=snapshot');
   if (!cam) throw new Error('Keine Kamera');
   return fetch(cam, { signal: AbortSignal.timeout(6000) });
+}
+
+
+// ---------- ESPHome: fertige Firmware für das Flashen per USB ----------
+export async function espFirmware(configuration) {
+  const base = espBase();
+  const cfg = encodeURIComponent(configuration);
+  let file = null;
+  try {
+    const list = await fetch(`${base}/downloads?configuration=${cfg}`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
+    file = (list.find((x) => /factory/i.test(x.file || x.title || '')) || list[0])?.file;
+  } catch {}
+  const urls = file
+    ? [`${base}/download.bin?configuration=${cfg}&file=${encodeURIComponent(file)}`]
+    : [`${base}/download.bin?configuration=${cfg}&file=firmware.factory.bin`, `${base}/download.bin?configuration=${cfg}&type=firmware-factory.bin`, `${base}/download.bin?configuration=${cfg}`];
+  for (const u of urls) {
+    const r = await fetch(u, { signal: AbortSignal.timeout(30000) });
+    if (r.ok) return { buf: Buffer.from(await r.arrayBuffer()), name: file || 'firmware.factory.bin' };
+  }
+  throw new Error('Keine fertige Firmware – erst in ESPHome „Kompilieren“');
+}
+
+// ---------- 3D-Drucker: G-Code an Moonraker senden und drucken ----------
+export async function printFile(tileId, uploadUrl, start = true) {
+  let tile;
+  for (const tab of layout().tabs) tile ||= (tab.tiles || []).find((t) => t.id === tileId && t.type === 'printer');
+  if (!tile?.url) throw new Error('Drucker nicht gefunden');
+  const name = String(uploadUrl).split('/').pop();
+  const f = uploadPath(name);
+  if (!f || !/\.gcode$/i.test(f)) throw new Error('Nur G-Code-Dateien können gedruckt werden (vorher slicen)');
+  const boundary = '----smarthome' + crypto.randomBytes(8).toString('hex');
+  const head = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: application/octet-stream\r\n\r\n`);
+  const mid = start ? Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="print"\r\n\r\ntrue`) : Buffer.alloc(0);
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const r = await fetch(tile.url.replace(/\/$/, '') + '/server/files/upload', {
+    method: 'POST',
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, ...(tile.apiKey ? { 'X-Api-Key': tile.apiKey } : {}) },
+    body: Buffer.concat([head, fs.readFileSync(f), mid, tail]),
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!r.ok) throw new Error('Moonraker: ' + r.status);
+  return { ok: true, printer: tile.title || 'Drucker', file: name, started: start };
+}
+
+export function printers() {
+  return layout().tabs.flatMap((t) => (t.tiles || []).filter((x) => x.type === 'printer').map((x) => ({ id: x.id, title: x.title || '3D-Drucker' })));
 }

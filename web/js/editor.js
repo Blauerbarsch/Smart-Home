@@ -115,6 +115,13 @@ export function editTile(original) {
           input = h('select', { class: 'input', onchange: (e) => (tile[f.key] = e.target.value) }, h('option', { value: '' }, '– wählen –'),
             S.sites.map((s) => h('option', { value: s.id, selected: s.id === val }, s.name)));
           break;
+        case 'signals': {
+          const toText = (list) => (list || []).map((x) => [x.label, x.fn, x.address, x.type, x.scale, x.unit, x.writable ? 'ja' : 'nein'].join('; ')).join('\n');
+          input = h('textarea', { class: 'input', style: { fontFamily: 'var(--mono)', fontSize: '12px', minHeight: '120px' }, placeholder: 'Pumpe; 1; 0; ; ; ; ja\nTemperatur; 3; 10; i16; 0.1; °C; nein',
+            oninput: (e) => (tile[f.key] = e.target.value.split('\n').map((l) => l.split(';').map((x) => x.trim())).filter((a) => a[0]).map(([label, fn = '3', address = '0', type = 'u16', scale = '1', unit = '', w = '']) =>
+              ({ label, fn: Number(fn) || 3, address: Number(address) || 0, type: type || 'u16', scale: Number(String(scale).replace(',', '.')) || 1, unit, writable: /^(ja|j|yes|y|1|true)$/i.test(w) }))) }, toText(val));
+          break;
+        }
         case 'resource': {
           const list = () => ((tile.kind === 'vm' ? S.unraid?.vms : S.unraid?.containers) || []).map((x) => x.name);
           input = h('select', { class: 'input', onchange: (e) => (tile[f.key] = e.target.value) }, h('option', { value: '' }, S.unraid ? '– wählen –' : 'Unraid-API nicht verbunden'),

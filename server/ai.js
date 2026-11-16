@@ -5,7 +5,12 @@ import { ha } from './ha.js';
 import { mesh } from './mesh.js';
 import * as unraid from './unraid.js';
 import { github } from './github.js';
-import { inventreeSearch } from './maker.js';
+import { inventreeSearch, uploadPath } from './maker.js';
+import fs from 'node:fs';
+import * as wbench from './workbench.js';
+import * as chronik from './chronik.js';
+import * as autom from './automations.js';
+import { pdfBlock } from './llm.js';
 
 async function* sseLines(res) {
   const decoder = new TextDecoder();
@@ -47,6 +52,7 @@ function systemPrompt(projectId, withHome) {
     `Jetzt: ${now}.`,
     sites && `Standorte: ${sites}.`,
     withHome && 'Du kannst Home Assistant, den Unraid-Server (Container, VMs), GitHub-Repos, das Teilelager und das Meshtastic-Netz über Werkzeuge abfragen. Schalte, starte oder stoppe nur, was der Nutzer ausdrücklich will.',
+    'Werkstatt-Werkzeuge: Tagebuch (auch mit Foto von Kopfs Kamera), Bauteil vor der Kamera erkennen, Timer, Chronik durchsuchen, Automationen entwerfen.',
     projectContext(projectId),
   ].filter(Boolean).join('\n\n');
 }
@@ -102,6 +108,41 @@ const TOOLS = [
     input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
   },
   {
+    name: 'diary_add',
+    description: 'Schreibt einen Eintrag ins Werkstatt-Tagebuch des aktuellen (oder genannten) Projekts, optional mit Foto von Kopfs Kamera. Für „notier …“, „schreib auf …“, „mach ein Foto“.',
+    input_schema: { type: 'object', properties: { text: { type: 'string' }, photo: { type: 'boolean' }, project: { type: 'string', description: 'Projektname, leer = aktuelles' } } },
+  },
+  {
+    name: 'identify_part',
+    description: 'Erkennt das Bauteil, das gerade vor Kopfs Kamera gehalten wird (Name, Beschriftung, Daten).',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'set_timer',
+    description: 'Stellt einen Timer/eine Erinnerung; nach Ablauf sagt Kopf Bescheid und das Handy bekommt eine Nachricht.',
+    input_schema: { type: 'object', properties: { minutes: { type: 'number' }, text: { type: 'string' } }, required: ['minutes'] },
+  },
+  {
+    name: 'list_timers',
+    description: 'Listet laufende Timer.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'chronik_search',
+    description: 'Durchsucht die Chronik (Zeitleiste: Schaltvorgänge, Personen, Mesh, Alarme, Server, Commits, Tagebuch, Timer). Für Fragen wie „wann war …“, „was habe ich … gemacht“.',
+    input_schema: { type: 'object', properties: { text: { type: 'string' }, days: { type: 'number' }, source: { type: 'string', enum: ['', 'haus', 'mesh', 'server', 'github', 'werkstatt', 'alarm'] } } },
+  },
+  {
+    name: 'kopf_move',
+    description: 'Bewegt Kopfs eigenen Körper: gespeicherte Pose oder Ablauf abspielen (z. B. Nicken, Kopfschütteln, Zwinkern, Umschauen).',
+    input_schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+  },
+  {
+    name: 'automation_draft',
+    description: 'Entwirft eine Home-Assistant-Automation aus einer Beschreibung. Sie wird NICHT direkt aktiv, sondern muss im Dashboard (Reiter Automationen) bestätigt werden.',
+    input_schema: { type: 'object', properties: { description: { type: 'string' } }, required: ['description'] },
+  },
+  {
     name: 'add_project_task',
     description: 'Fügt dem aktuellen Projekt eine Aufgabe hinzu.',
     input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
@@ -114,7 +155,33 @@ const TOOLS = [
 ];
 
 export async function runTool(name, input, projectId) {
+  projectId ||= wbench.wb.activeProject;
   switch (name) {
+    case 'diary_add':
+      return wbench.diaryAdd(input);
+    case 'identify_part':
+      return wbench.identifyPart({ fromKopf: true });
+    case 'set_timer': {
+      const t = wbench.addTimer(input);
+      return { ok: true, due: new Date(t.due).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }), text: t.text };
+    }
+    case 'list_timers':
+      return wbench.wb.timers.map((t) => ({ text: t.text, inMinutes: Math.round((t.due - Date.now()) / 60e3) }));
+    case 'chronik_search':
+      return chronik.search({ text: input.text || '', source: input.source || '', days: input.days || 30, limit: 40 }).map((e) => ({ when: new Date(e.ts).toLocaleString('de-DE'), what: e.title, detail: e.detail || undefined }));
+    case 'kopf_move': {
+      const n = String(input.name || '');
+      const seq = Object.keys(wbench.wb.sequences).find((k) => k.toLowerCase() === n.toLowerCase());
+      if (seq) return wbench.playSequence(seq);
+      const pose = Object.keys(wbench.wb.poses).find((k) => k.toLowerCase() === n.toLowerCase());
+      if (pose) return wbench.setPose(wbench.wb.poses[pose]);
+      return { error: 'unbekannt', available: [...Object.keys(wbench.wb.sequences), ...Object.keys(wbench.wb.poses)] };
+    }
+    case 'automation_draft': {
+      const d = await autom.draft(input.description, settings().notifyHaService);
+      autom.addPending(d);
+      return { explanation: d.explanation, warnings: d.warnings, hint: 'Entwurf liegt im Dashboard unter „Automationen“ zur Bestätigung bereit.' };
+    }
     case 'find_entities':
       return ha.summary(input.query || '').slice(0, 60);
     case 'call_service':
@@ -165,15 +232,31 @@ export async function runTool(name, input, projectId) {
   }
 }
 
-const CONTROL_TOOLS = ['find_entities', 'call_service', 'manage_server'];
+const CONTROL_TOOLS = ['find_entities', 'call_service', 'manage_server', 'kopf_move'];
 export const toolsFor = (withHome) => (withHome ? TOOLS : TOOLS.filter((t) => !CONTROL_TOOLS.includes(t.name)));
 
 // ---------- Claude ----------
-async function chatClaude({ messages, projectId }, emit, signal) {
+async function chatClaude(req, emit, signal) {
+  const { messages, projectId } = req;
   const s = settings();
   if (!s.anthropicKey) throw new Error('Kein Anthropic-API-Key eingetragen (Einstellungen)');
   const withHome = Boolean(s.aiHomeControl);
   const convo = messages.map((m) => ({ role: m.role, content: m.content }));
+  // Datenblätter des Projekts (PDF) an die letzte Frage hängen
+  const proj = projectId && projects.get(projectId);
+  if (req.includeDocs && proj?.docs?.length && convo.at(-1)?.role === 'user') {
+    let total = 0;
+    const blocks = [];
+    for (const d of proj.docs) {
+      const f = uploadPath(String(d.url).split('/').pop());
+      if (!f || !f.endsWith('.pdf')) continue;
+      const buf = fs.readFileSync(f);
+      if (total + buf.length > 20e6) break;
+      total += buf.length;
+      blocks.push(pdfBlock(buf));
+    }
+    if (blocks.length) convo[convo.length - 1] = { role: 'user', content: [...blocks, { type: 'text', text: String(convo.at(-1).content) }] };
+  }
 
   for (let round = 0; round < 6; round++) {
     const res = await fetch((process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com') + '/v1/messages', {

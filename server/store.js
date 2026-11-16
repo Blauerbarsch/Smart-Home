@@ -7,7 +7,7 @@ export const DATA_DIR = process.env.DATA_DIR || path.resolve('data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const SECRET_KEYS = ['haToken', 'anthropicKey', 'mqttPassword', 'meshKeys', 'githubToken', 'ntfyToken', 'inventreeToken', 'unraidApiKey', 'moonrakerKey'];
-const URL_KEYS = { haUrl: 'http://', kopfUrl: 'http://', kopfOutputUrl: 'http://', kopfVisionUrl: 'http://', esphomeUrl: 'http://', mqttUrl: 'mqtt://', inventreeUrl: 'http://', ntfyUrl: 'https://', unraidUrl: 'http://' };
+const URL_KEYS = { haUrl: 'http://', kopfUrl: 'http://', kopfOutputUrl: 'http://', kopfVisionUrl: 'http://', kopfBodyUrl: 'http://', esphomeUrl: 'http://', mqttUrl: 'mqtt://', inventreeUrl: 'http://', ntfyUrl: 'https://', unraidUrl: 'http://' };
 
 function readJson(file, fallback) {
   try {
@@ -40,6 +40,10 @@ const DEFAULT_CONFIG = {
     defaultAi: 'claude',
     kopfTools: true,
     agentToken: '',
+    kopfBodyUrl: '',
+    meshAlerts: 'offline',
+    meshAlertTarget: 'all',
+    meshCommandNodes: '',
     aiHomeControl: true,
     accent: '#00d8ff',
     title: 'Zuhause',
@@ -78,6 +82,8 @@ const DEFAULT_CONFIG = {
     },
     { id: 'map', name: 'Standorte', icon: 'map-marker-radius', type: 'map' },
     { id: 'server', name: 'Server', icon: 'server', type: 'server' },
+    { id: 'automations', name: 'Automationen', icon: 'robot', type: 'automations' },
+    { id: 'chronik', name: 'Chronik', icon: 'timeline-text-outline', type: 'chronik' },
     { id: 'workshop', name: 'Werkstatt', icon: 'atom-variant', type: 'workshop' },
   ],
 };
@@ -101,6 +107,13 @@ if (!config.migrations.includes('v2-server-tab')) {
   config.migrations.push('v2-server-tab');
   writeJson('config.json', config);
 }
+if (!config.migrations.includes('v3-chronik-automations')) {
+  const at = () => { const i = config.tabs.findIndex((t) => t.type === 'workshop'); return i < 0 ? config.tabs.length : i; };
+  if (!config.tabs.some((t) => t.type === 'automations')) config.tabs.splice(at(), 0, { id: 'automations', name: 'Automationen', icon: 'robot', type: 'automations' });
+  if (!config.tabs.some((t) => t.type === 'chronik')) config.tabs.splice(at(), 0, { id: 'chronik', name: 'Chronik', icon: 'timeline-text-outline', type: 'chronik' });
+  config.migrations.push('v3-chronik-automations');
+  writeJson('config.json', config);
+}
 
 // Umgebungsvariablen haben Vorrang (praktisch für Unraid-Template).
 const ENV_MAP = {
@@ -111,6 +124,7 @@ const ENV_MAP = {
   kopfUrl: 'KOPF_URL',
   kopfOutputUrl: 'KOPF_OUTPUT_URL',
   kopfVisionUrl: 'KOPF_VISION_URL',
+  kopfBodyUrl: 'KOPF_BODY_URL',
   esphomeUrl: 'ESPHOME_URL',
   mqttUrl: 'MQTT_URL',
   mqttUser: 'MQTT_USER',

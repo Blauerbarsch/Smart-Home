@@ -13,11 +13,17 @@ import { github, APP_COMMIT } from './github.js';
 import * as unraid from './unraid.js';
 import * as services from './services.js';
 import * as maker from './maker.js';
+import * as wbench from './workbench.js';
+import * as chronik from './chronik.js';
+import * as autom from './automations.js';
+import * as fieldbus from './fieldbus.js';
+import './meshcmd.js';
+import { ask } from './llm.js';
 
 const PORT = Number(process.env.PORT || 8080);
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
 const PASSWORD = process.env.APP_PASSWORD || '';
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 // ---------- Anmeldung (optional über APP_PASSWORD) ----------
 const sessions = new Set(store.readJson('sessions.json', []));
@@ -39,7 +45,12 @@ mesh.on('text', (m) => broadcast('mesh-text', m));
 mesh.on('status', (s) => broadcast('mesh', s));
 mesh.on('trace', (t) => broadcast('mesh-trace', t));
 ha.on('notifications', (n) => broadcast('ha-notifications', n));
-alerts.on('alert', (a) => broadcast('alert', a));
+alerts.on('alert', (a) => {
+  broadcast('alert', a);
+  if (a.rule !== 'timer') chronik.add({ source: 'alarm', kind: a.level, title: a.title, detail: a.text, icon: a.level === 'ok' ? 'check-circle-outline' : 'alert-outline' });
+});
+chronik.onEntry((e) => broadcast('chronik', e));
+github.on('pushed', (r) => chronik.add({ source: 'github', kind: 'push', title: `Neue Commits in ${r.name}`, ref: r.full_name, icon: 'source-commit' }));
 github.on('update', (u) => broadcast('app-update', u));
 github.on('synced', async (r) => broadcast('projects', { projects: store.projects.list, ...r }));
 setInterval(() => broadcast('ping', Date.now()), 25000).unref();
@@ -233,10 +244,20 @@ route('POST', '/api/kopf/speak', async (req, res) => {
   await kopfSpeak((await body(req)).text);
   json(res, 200, { ok: true });
 });
-route('GET', '/api/kopf/snapshot', async (req, res) => {
+route('GET', '/api/kopf/snapshot', async (req, res, p, q) => {
   const url = store.settings().kopfVisionUrl;
   if (!url) return json(res, 404, { error: 'Kamera nicht eingerichtet' });
-  await pipeFetch(res, await fetch(url.replace(/\/$/, '') + '/snapshot.jpg', { signal: AbortSignal.timeout(5000) }));
+  await pipeFetch(res, await fetch(url.replace(/\/$/, '') + (q.get('debug') ? '/debug.jpg' : '/snapshot.jpg'), { signal: AbortSignal.timeout(5000) }));
+});
+route('GET', '/api/kopf/live', async (req, res) => {
+  const url = store.settings().kopfVisionUrl;
+  if (!url) return json(res, 404, { error: 'Kamera nicht eingerichtet' });
+  const ctrl = new AbortController();
+  req.on('close', () => ctrl.abort());
+  const up = await fetch(url.replace(/\/$/, '') + '/live.mjpg', { signal: ctrl.signal });
+  res.writeHead(up.status, { 'content-type': up.headers.get('content-type') || 'multipart/x-mixed-replace; boundary=frame', 'cache-control': 'no-store' });
+  try { for await (const c of up.body) res.write(c); } catch {}
+  res.end();
 });
 
 // Meshtastic
@@ -287,6 +308,7 @@ route('GET', '/api/unraid', async (req, res, p, q) => json(res, 200, await unrai
 route('POST', '/api/unraid/:kind/:id/:action', async (req, res, p) => {
   const id = decodeURIComponent(p.id);
   const r = p.kind === 'vm' ? await unraid.vmAction(id, p.action) : await unraid.containerAction(id, p.action);
+  chronik.add({ source: 'server', kind: p.action, title: `${id.replace(/^[^:]*:/, '')}: ${p.action}`, icon: p.kind === 'vm' ? 'monitor' : 'docker' });
   json(res, 200, { ok: true, result: r });
 });
 route('GET', '/api/unraid/notifications', async (req, res) => json(res, 200, await unraid.notifications()));
@@ -308,8 +330,8 @@ route('GET', '/api/printer/:id', async (req, res, p) => json(res, 200, await mak
 route('GET', '/api/printer/:id/snapshot', async (req, res, p) => pipeFetch(res, await maker.printerSnapshot(p.id)));
 
 // Uploads + Projekt-Tagebuch
-route('POST', '/api/upload', async (req, res) => {
-  const url = maker.saveUpload(await rawBody(req, 15e6), String(req.headers['content-type'] || '').split(';')[0]);
+route('POST', '/api/upload', async (req, res, p, q) => {
+  const url = maker.saveUpload(await rawBody(req, 80e6), String(req.headers['content-type'] || '').split(';')[0], q.get('name') || '');
   json(res, 200, { url });
 });
 route('GET', '/api/uploads/:file', (req, res, p) => {
@@ -319,7 +341,13 @@ route('GET', '/api/uploads/:file', (req, res, p) => {
   fs.createReadStream(f).pipe(res);
 });
 route('GET', '/api/projects/:id/log', (req, res, p) => json(res, 200, maker.diary.list(p.id)));
-route('POST', '/api/projects/:id/log', async (req, res, p) => json(res, 200, maker.diary.add(p.id, await body(req))));
+route('POST', '/api/projects/:id/log', async (req, res, p) => {
+  const b = await body(req);
+  if (b.kopfPhoto) return json(res, 200, (await wbench.diaryAdd({ text: b.text, photo: true, project: store.projects.get(p.id)?.name })).entry);
+  const e = maker.diary.add(p.id, b);
+  chronik.add({ source: 'werkstatt', kind: 'tagebuch', title: `${store.projects.get(p.id)?.name || 'Projekt'}: ${b.text || 'Foto'}`, ref: p.id, icon: 'notebook-outline' });
+  json(res, 200, e);
+});
 route('DELETE', '/api/projects/:id/log/:logId', (req, res, p) => { maker.diary.remove(p.id, Number(p.logId)); json(res, 200, { ok: true }); });
 
 // InvenTree
@@ -368,11 +396,113 @@ route('POST', '/api/agent/call', async (req, res) => {
   try {
     const result = await runTool(name, input || {}, projectId);
     broadcast('agent', { name, input, at: Date.now() });
+    if (!['find_entities', 'mesh_nodes', 'server_status', 'repo_info', 'chronik_search', 'list_timers', 'parts_search', 'diary_add', 'set_timer', 'automation_draft'].includes(name)) {
+      chronik.add({ source: 'ki', kind: name, title: `Kopf: ${name.replace(/_/g, ' ')}`, detail: JSON.stringify(input).slice(0, 200), icon: 'robot-outline' });
+    }
     json(res, 200, { result });
   } catch (e) {
     json(res, 200, { result: { error: e.message } });
   }
 });
+
+// ---------- Werkbank ----------
+route('GET', '/api/workbench', (req, res) => json(res, 200, wbench.wb));
+route('POST', '/api/workbench/active', async (req, res) => { wbench.setActive((await body(req)).project); json(res, 200, { ok: true }); });
+route('POST', '/api/workbench/timer', async (req, res) => json(res, 200, wbench.addTimer(await body(req))));
+route('DELETE', '/api/workbench/timer/:id', (req, res, p) => { wbench.cancelTimer(p.id); json(res, 200, { ok: true }); });
+route('POST', '/api/workbench/identify', async (req, res, p, q) => {
+  if (q.get('kopf')) return json(res, 200, await wbench.identifyPart({ fromKopf: true }));
+  const type = String(req.headers['content-type'] || 'image/jpeg').split(';')[0];
+  json(res, 200, await wbench.identifyPart({ image: await rawBody(req, 15e6), mediaType: type }));
+});
+route('PUT', '/api/workbench/guard', async (req, res) => json(res, 200, wbench.setGuard(await body(req))));
+route('PUT', '/api/workbench/filament', async (req, res) => json(res, 200, wbench.saveFilament((await body(req)).filament || [])));
+
+// Messreihen + Feldbus
+route('GET', '/api/measure', (req, res, p, q) => json(res, 200, wbench.wb.sessions.filter((s) => !q.get('project') || s.project === q.get('project'))));
+route('POST', '/api/measure', async (req, res) => json(res, 200, wbench.startSession(await body(req))));
+route('GET', '/api/measure/:id', (req, res, p) => json(res, 200, wbench.sessionData(p.id)));
+route('POST', '/api/measure/:id/stop', (req, res, p) => json(res, 200, wbench.stopSession(p.id)));
+route('DELETE', '/api/measure/:id', (req, res, p) => { wbench.deleteSession(p.id); json(res, 200, { ok: true }); });
+route('POST', '/api/fieldbus/read', async (req, res) => {
+  const src = await body(req);
+  json(res, 200, { value: src.type === 'scpi' ? await fieldbus.scpiQuery(src) : await fieldbus.modbusRead(src) });
+});
+route('POST', '/api/fieldbus/write', async (req, res) => json(res, 200, { ok: await fieldbus.modbusWrite(await body(req)) }));
+route('GET', '/api/tile-modbus/:id', async (req, res, p) => {
+  let tile;
+  for (const tab of store.layout().tabs) tile ||= (tab.tiles || []).find((t) => t.id === p.id && t.type === 'plc');
+  if (!tile) return json(res, 404, { error: 'Kachel nicht gefunden' });
+  const values = await Promise.all((tile.signals || []).map((sg) => fieldbus.modbusRead({ host: tile.host, port: tile.port, unit: tile.unit, ...sg }).catch((e) => ({ error: e.message }))));
+  json(res, 200, { values });
+});
+route('POST', '/api/tile-modbus/:id/write', async (req, res, p) => {
+  let tile;
+  for (const tab of store.layout().tabs) tile ||= (tab.tiles || []).find((t) => t.id === p.id && t.type === 'plc');
+  if (!tile) return json(res, 404, { error: 'Kachel nicht gefunden' });
+  const { index, value } = await body(req);
+  const sg = tile.signals?.[index];
+  if (!sg?.writable) return json(res, 403, { error: 'Signal ist nicht schreibbar' });
+  await fieldbus.modbusWrite({ host: tile.host, port: tile.port, unit: tile.unit, kind: Number(sg.fn) === 1 ? 'coil' : 'register', address: sg.address, value });
+  chronik.add({ source: 'werkstatt', kind: 'sps', title: `${tile.title || 'SPS'}: ${sg.label} = ${value}`, icon: 'expansion-card' });
+  json(res, 200, { ok: true });
+});
+
+// Mesh: Reichweitentests, Abdeckung, Energiebilanz
+route('POST', '/api/mesh/rangetest', async (req, res) => json(res, 200, wbench.startRangeTest(await body(req))));
+route('POST', '/api/mesh/rangetest/:id/stop', (req, res, p) => json(res, 200, wbench.stopRangeTest(p.id)));
+route('DELETE', '/api/mesh/rangetest/:id', (req, res, p) => { wbench.deleteRangeTest(p.id); json(res, 200, { ok: true }); });
+route('GET', '/api/mesh/rangetest/:id', (req, res, p) => json(res, 200, wbench.rangeTestData(p.id)));
+route('GET', '/api/mesh/coverage', (req, res, p, q) => json(res, 200, wbench.coverage(Number(q.get('days')) || 30)));
+route('GET', '/api/mesh/energy/:id', (req, res, p, q) => json(res, 200, wbench.energy(decodeURIComponent(p.id), Number(q.get('days')) || 7)));
+route('PUT', '/api/mesh/node/:id/meta', async (req, res, p) => json(res, 200, wbench.setNodeMeta(decodeURIComponent(p.id), await body(req))));
+
+// Kopfs Körper
+route('GET', '/api/kopf/body', async (req, res) => {
+  const [st, parts] = await Promise.all([wbench.body('/state'), wbench.body('/parts').catch(() => null)]);
+  json(res, 200, { state: st.state || st, parts: parts?.parts || parts, poses: wbench.wb.poses, sequences: wbench.wb.sequences });
+});
+route('POST', '/api/kopf/body/pose', async (req, res) => json(res, 200, await wbench.setPose((await body(req)).parts || {})));
+route('POST', '/api/kopf/body/play', async (req, res) => { const b = await body(req); json(res, 200, await wbench.playSequence(b.frames || b.name)); });
+route('POST', '/api/kopf/body/reset', async (req, res) => json(res, 200, await wbench.body('/reset', {})));
+route('PUT', '/api/kopf/poses', async (req, res) => json(res, 200, wbench.savePoses(await body(req))));
+
+// Chronik
+route('GET', '/api/chronik', (req, res, p, q) => json(res, 200, { entries: chronik.search({ text: q.get('text') || '', source: q.get('source') || '', days: Number(q.get('days')) || 30, before: q.get('before'), limit: Number(q.get('limit')) || 300 }), stats: chronik.stats(Number(q.get('days')) || 30) }));
+route('POST', '/api/chronik', async (req, res) => { const b = await body(req); json(res, 200, chronik.add({ source: 'werkstatt', kind: 'notiz', title: b.title, detail: b.detail, icon: 'pencil' })); });
+
+// Automationen
+route('GET', '/api/automations', (req, res) => json(res, 200, { list: autom.list(), pending: autom.pending }));
+route('POST', '/api/automations/draft', async (req, res) => json(res, 200, await autom.draft((await body(req)).text, store.settings().notifyHaService)));
+route('POST', '/api/automations/save', async (req, res) => { const b = await body(req); const r = await autom.save(b.automation, b.id); if (b.pendingId) autom.dropPending(b.pendingId); json(res, 200, r); });
+route('DELETE', '/api/automations/pending/:id', (req, res, p) => { autom.dropPending(p.id); json(res, 200, { ok: true }); });
+route('GET', '/api/automations/:id', async (req, res, p) => json(res, 200, await autom.get(p.id)));
+route('DELETE', '/api/automations/:id', async (req, res, p) => json(res, 200, await autom.remove(p.id)));
+
+// GitHub: Releases + KiCad
+route('GET', '/api/github/releases', async (req, res) => json(res, 200, await github.releases()));
+route('GET', '/api/github/kicad/:owner/:name', async (req, res, p) => json(res, 200, await wbench.kicadBom(`${p.owner}/${p.name}`)));
+
+// ESPHome: Firmware für USB-Flashen, KI-Prüfung
+route('GET', '/api/esphome/firmware', async (req, res, p, q) => {
+  const fw = await maker.espFirmware(q.get('configuration'));
+  res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${fw.name}"` });
+  res.end(fw.buf);
+});
+route('POST', '/api/esphome/review', async (req, res) => {
+  const { yaml, issues } = await body(req);
+  const found = (issues || []).join('\n') || '–';
+  const text = await ask({
+    maxTokens: 1800,
+    system: 'Du prüfst ESPHome-Konfigurationen wie ein erfahrener Elektronik-Bastler. Antworte auf Deutsch in kurzem Markdown: Probleme (mit Zeile/Pin), Verbesserungen, fehlende Dinge (z. B. OTA-Passwort, Fallback-AP, Pull-ups, Filter). Keine Wiederholung der ganzen Datei.',
+    content: 'Automatische Pin-Prüfung fand:\n' + found + '\n\nYAML:\n```yaml\n' + String(yaml).slice(0, 30000) + '\n```',
+  });
+  json(res, 200, { review: text });
+});
+
+// 3D-Druck
+route('GET', '/api/printers', (req, res) => json(res, 200, maker.printers()));
+route('POST', '/api/printer/:id/print', async (req, res, p) => { const b = await body(req); json(res, 200, await maker.printFile(p.id, b.file, b.start !== false)); });
 
 // ---------- Server ----------
 const server = http.createServer(async (req, res) => {

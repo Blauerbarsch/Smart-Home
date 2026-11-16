@@ -81,10 +81,11 @@ class HomeAssistant extends EventEmitter {
         }
         this.emit('notifications', Object.values(this.notifications));
       } else if (msg.type === 'event' && msg.event?.event_type === 'state_changed') {
-        const { entity_id, new_state } = msg.event.data;
+        const { entity_id, new_state, old_state } = msg.event.data;
         if (new_state) this.states.set(entity_id, new_state);
         else this.states.delete(entity_id);
         this.emit('state', { entity_id, state: new_state });
+        this.emit('change', { entity_id, state: new_state, old: old_state });
       } else if (msg.type === 'result' && this.pending.has(msg.id)) {
         const { resolve, reject } = this.pending.get(msg.id);
         this.pending.delete(msg.id);

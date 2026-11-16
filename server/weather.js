@@ -3,6 +3,7 @@
 import { EventEmitter } from 'node:events';
 import { settings, layout } from './store.js';
 import { alerts } from './alerts.js';
+import { ha } from './ha.js';
 
 const API = () => (process.env.BRIGHTSKY_URL || settings().weatherApiUrl || 'https://api.brightsky.dev').replace(/\/$/, '');
 const DWD = () => (process.env.DWD_OPENDATA_URL || 'https://opendata.dwd.de').replace(/\/$/, '');
@@ -35,12 +36,29 @@ async function get(url) {
   return r.json();
 }
 
+/** Ohne eigene Standorte: „Zuhause“ aus Home Assistant (zone.home) – außer es ist noch HAs Vorgabe (Amsterdam). */
+function haHome() {
+  const z = ha.states?.get?.('zone.home');
+  const lat = Number(z?.attributes?.latitude), lon = Number(z?.attributes?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat - 52.3731339) < 1e-4 && Math.abs(lon - 4.8903147) < 1e-4) return null;
+  return { id: 'ha-home', name: z.attributes.friendly_name || 'Zuhause', lat, lon };
+}
+export function sitesWithCoords() {
+  const own = (layout().sites || []).filter((s) => s.lat !== '' && s.lat != null && Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lon)));
+  if (own.length) return own;
+  const home = haHome();
+  return home ? [home] : [];
+}
 /** Standort auflösen: Standort-ID, sonst erster Standort mit Koordinaten. */
 export function siteFor(siteId) {
-  const sites = (layout().sites || []).filter((s) => Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lon)));
+  const sites = sitesWithCoords();
   return sites.find((s) => s.id === siteId) || sites[0] || null;
 }
-export const sitesWithCoords = () => (layout().sites || []).filter((s) => Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lon)));
+export const haHomeIsDefault = () => {
+  const z = ha.states?.get?.('zone.home');
+  return Boolean(z && Math.abs(Number(z.attributes.latitude) - 52.3731339) < 1e-4);
+};
 const ll = (s) => `lat=${Number(s.lat).toFixed(4)}&lon=${Number(s.lon).toFixed(4)}`;
 
 const round = (v, d = 0) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
@@ -186,7 +204,9 @@ export async function pollen(regionId) {
 /** Alles für eine Kachel/Standort in einem Rutsch; Teilfehler bleiben Teilfehler. */
 export async function overview(siteId) {
   const site = siteFor(siteId);
-  if (!site) throw new Error('Kein Standort mit Koordinaten – unter „Standorte“ einen Ort anlegen');
+  if (!site) throw new Error(haHomeIsDefault()
+    ? 'Kein Standort: Lege unter „Standorte“ einen Ort an (in Home Assistant steht als Zuhause noch die Vorgabe Amsterdam).'
+    : 'Kein Standort mit Koordinaten – unter „Standorte“ einen Ort anlegen');
   const s = settings();
   const part = (p) => p.then((v) => v, (e) => ({ error: e.message }));
   const [cur, fc, nc, wa, po] = await Promise.all([part(current(site)), part(forecast(site)), part(nowcast(site)), part(warnings(site)), part(pollen(s.pollenRegion))]);

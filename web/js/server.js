@@ -84,7 +84,7 @@ export function renderServer(view, actions) {
     const containers = h('div', { class: 'card' }, h('h3', {}, icon('docker'), 'Docker-Container', h('span', { class: 'spacer' }),
       updates.length ? h('span', { class: 'chip warn' }, h('span', { class: 'dot' }), `${updates.length} Updates`) : null,
       h('span', { class: 'chip' }, `${d.containers.filter((c) => running(c.state)).length}/${d.containers.length} an`)),
-      h('div', { class: 'res-grid' }, d.containers.map((c) => resCard('container', c))));
+      d.containers.length ? h('div', { class: 'res-grid' }, d.containers.map((c) => resCard('container', c))) : h('div', { class: 'empty' }, d.errors?.docker ? 'Docker: ' + d.errors.docker : 'Keine Container'));
 
     const svcEntries = Object.entries(services);
     const svc = svcEntries.length ? h('div', { class: 'card' }, h('h3', {}, icon('lan-check'), 'Dienste'),

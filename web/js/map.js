@@ -171,10 +171,22 @@ export function renderMap(view, actions) {
   }
 
   // ---------- Standort-Editor ----------
+  // Ohne HTTPS gibt der Browser keinen Standort her – dann die Position aus Home Assistant nehmen
+  // (Person oder Handy mit GPS, die zuletzt aktualisierte).
+  function haPosition() {
+    const list = [...S.states.values()].filter((e) => /^(person|device_tracker)\./.test(e.entity_id) && Number.isFinite(e.attributes.latitude) && Number.isFinite(e.attributes.longitude))
+      .sort((a, b) => (a.entity_id.startsWith('person.') ? -1 : 0) - (b.entity_id.startsWith('person.') ? -1 : 0) || Date.parse(b.last_updated) - Date.parse(a.last_updated));
+    return list[0] || null;
+  }
   function locate(cb) {
-    if (!navigator.geolocation) return toast('Standort im Browser nicht verfügbar', true);
-    navigator.geolocation.getCurrentPosition((p) => cb(p.coords.latitude, p.coords.longitude),
-      (e) => toast('Standort nicht verfügbar: ' + e.message + (location.protocol !== 'https:' ? ' (HTTPS nötig)' : ''), true), { enableHighAccuracy: true, timeout: 10000 });
+    const fallback = (why) => {
+      const p = haPosition();
+      if (!p) return toast('Standort nicht verfügbar: ' + why, true);
+      cb(p.attributes.latitude, p.attributes.longitude);
+      toast(`Position von „${p.attributes.friendly_name || p.entity_id}“ aus Home Assistant übernommen`);
+    };
+    if (!navigator.geolocation || !window.isSecureContext) return fallback('Browser gibt ihn nur über HTTPS heraus');
+    navigator.geolocation.getCurrentPosition((p) => cb(p.coords.latitude, p.coords.longitude), (e) => fallback(e.message), { enableHighAccuracy: true, timeout: 10000 });
   }
 
   function editSite(orig) {

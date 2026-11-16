@@ -115,7 +115,7 @@ export function renderWorkshop(view, initialId) {
 
   // ---------- Links: Projektliste ----------
   function drawLeft() {
-    const modeSwitch = h('div', { style: { display: 'flex', gap: '4px' } }, [['projects', 'Projekte'], ['repos', 'Repos'], ['releases', 'Releases']].map(([k, l]) =>
+    const modeSwitch = h('div', { class: 'modes' }, [['projects', 'Projekte'], ['repos', 'Repos'], ['releases', 'Releases']].map(([k, l]) =>
       h('button', { class: 'hud-btn' + (leftMode === k ? ' on' : ''), onclick: () => { leftMode = k; drawLeft(); } }, l)));
     if (leftMode === 'releases') {
       left.replaceChildren(h('div', { class: 'hud-h' }, modeSwitch), releasesPanel());
@@ -128,15 +128,15 @@ export function renderWorkshop(view, initialId) {
     }
     const list = S.projects.filter((p) => filter === 'all' || p.status === filter);
     left.replaceChildren(
-      h('div', { class: 'hud-h' }, modeSwitch, h('span', { class: 'n' }, String(S.projects.length).padStart(2, '0')), h('span', { class: 'spacer' }),
-        h('button', { class: 'hud-btn icon', title: 'Neues Projekt', onclick: async () => {
+      h('div', { class: 'hud-h' }, modeSwitch),
+      h('div', { class: 'filters' }, [['all', 'Alle'], ...Object.entries(STATUS)].map(([k, l]) =>
+        h('button', { class: 'hud-btn' + (filter === k ? ' on' : ''), onclick: () => { filter = k; drawLeft(); } }, l)),
+        h('button', { class: 'hud-btn on', title: 'Neues Projekt', style: { marginLeft: 'auto' }, onclick: async () => {
           const p = await api('/projects', { body: { name: 'Neues Projekt', status: 'idea', color: S.settings.accent } });
           S.projects.unshift(p);
           select(p);
           setTimeout(() => center.querySelector('.pname')?.focus(), 50);
-        } }, icon('plus'))),
-      h('div', { class: 'filters' }, [['all', 'Alle'], ...Object.entries(STATUS)].map(([k, l]) =>
-        h('button', { class: 'hud-btn' + (filter === k ? ' on' : ''), onclick: () => { filter = k; drawLeft(); } }, l))),
+        } }, icon('plus'), 'Neu')),
       h('div', { class: 'hud-body' }, list.length ? list.map((p) => h('div', {
         class: 'proj' + (p === sel ? ' sel' : ''), style: { '--pc': hexToRgb(p.color) }, onclick: () => { select(p); mobile = 'center'; drawMtabs(); applyMobile(); },
       }, h('div', { class: 'nm' }, p.name, p.repo ? h('span', { class: 'proj-ic', title: p.repo }, icon('github')) : null,

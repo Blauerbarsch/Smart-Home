@@ -21,7 +21,7 @@ async function gql(query, variables = {}) {
 }
 
 const PARTS = {
-  docker: `docker { containers { id names image state status autoStart iconUrl webUiUrl isUpdateAvailable ports { privatePort publicPort type } } }`,
+  docker: `docker { containers { id names image state status autoStart iconUrl webUiUrl isUpdateAvailable labels ports { privatePort publicPort type } } }`,
   vms: `vms { domains { id name state } }`,
   array: `array { state capacity { kilobytes { free used total } }
     parityCheckStatus { status progress running errors }
@@ -33,11 +33,45 @@ const PARTS = {
   notifications: `notifications { overview { unread { info warning alert total } } }`,
 };
 
+// Ältere Unraid-API-Versionen kennen manche Felder noch nicht (z. B. iconUrl, isUpdateAvailable).
+// Statt den ganzen Teil scheitern zu lassen, werden unbekannte Felder entfernt und gemerkt.
+const adapted = {};
+async function queryPart(key) {
+  let query = adapted[key] || PARTS[key];
+  for (let i = 0; i < 6; i++) {
+    try {
+      const r = await gql(`query { ${query} }`);
+      adapted[key] = query;
+      return r;
+    } catch (e) {
+      const bad = [...e.message.matchAll(/Cannot query field "(\w+)" on type "\w+"/g)].map((m) => m[1]);
+      if (!bad.length) throw e;
+      for (const f of bad) query = query.replace(new RegExp(`\\b${f}\\b(\\s*\\{[^{}]*\\})?`), '');
+    }
+  }
+  throw new Error('Unraid-API: Abfrage passt nicht zur Version');
+}
+
+/** Web-Oberfläche und Symbol aus den Unraid-Labels (net.unraid.docker.*) ableiten. */
+function fromLabels(c) {
+  const l = c.labels || {};
+  const host = (() => { try { return new URL(settings().unraidUrl).hostname; } catch { return ''; } })();
+  let webUi = c.webUiUrl || l['net.unraid.docker.webui'] || '';
+  if (webUi) {
+    webUi = webUi.replace(/\[IP\]/gi, host).replace(/\[PORT:(\d+)\]/gi, (_, p) => {
+      const m = (c.ports || []).find((x) => String(x.privatePort) === p && x.publicPort);
+      return m ? m.publicPort : p;
+    });
+    if (/\[|\]/.test(webUi)) webUi = '';
+  }
+  return { icon: c.iconUrl || l['net.unraid.docker.icon'] || '', webUi };
+}
+
 /** Gesamtübersicht, 10 s gecached. Jeder Teil wird einzeln abgefragt, damit z. B. ein abgeschalteter VM-Dienst den Rest nicht blockiert. */
 export async function overview(force = false) {
   if (!force && cache.data && Date.now() - cache.t < 10000) return cache.data;
   const keys = Object.keys(PARTS);
-  const results = await Promise.allSettled(keys.map((k) => gql(`query { ${PARTS[k]} }`)));
+  const results = await Promise.allSettled(keys.map((k) => queryPart(k)));
   const data = {};
   const errors = {};
   results.forEach((r, i) => (r.status === 'fulfilled' ? Object.assign(data, r.value) : (errors[keys[i]] = r.reason.message)));
@@ -48,19 +82,21 @@ export async function overview(force = false) {
     release: data.info?.os?.release,
     cpuModel: data.info?.cpu?.brand,
     cpu: data.metrics?.cpu?.percentTotal,
-    mem: data.metrics?.memory ? { used: Number(data.metrics.memory.used), total: Number(data.metrics.memory.total), pct: data.metrics.memory.percentTotal } : null,
+    // „used“ zählt bei Unraid den Datei-Cache mit – der Prozentwert entspricht der Anzeige in Unraid
+    mem: data.metrics?.memory ? (() => { const m = data.metrics.memory; const total = Number(m.total); const pct = Number(m.percentTotal); return { used: Number.isFinite(pct) ? (total * pct) / 100 : Number(m.used), total, pct }; })() : null,
     array: data.array && {
       state: data.array.state,
       capacity: data.array.capacity?.kilobytes,
       parity: data.array.parityCheckStatus,
       disks: [...(data.array.parities || []), ...(data.array.disks || []), ...(data.array.caches || [])].map((d) => ({
-        name: d.name, type: d.type, temp: d.temp, status: d.status, spinning: d.isSpinning, size: Number(d.size || 0),
-        used: Number(d.fsUsed || 0), total: Number(d.fsSize || 0),
+        // Unraid liefert Kilobyte
+        name: d.name, type: d.type, temp: d.temp, status: d.status, spinning: d.isSpinning, size: Number(d.size || 0) * 1024,
+        used: Number(d.fsUsed || 0) * 1024, total: Number(d.fsSize || 0) * 1024,
       })),
     },
     containers: (data.docker?.containers || []).map((c) => ({
       id: c.id, name: (c.names?.[0] || '').replace(/^\//, ''), image: c.image, state: c.state, status: c.status,
-      autoStart: c.autoStart, icon: c.iconUrl, webUi: c.webUiUrl, update: Boolean(c.isUpdateAvailable),
+      autoStart: c.autoStart, ...fromLabels(c), update: Boolean(c.isUpdateAvailable),
       ports: (c.ports || []).filter((p) => p.publicPort).map((p) => p.publicPort),
     })).sort((a, b) => a.name.localeCompare(b.name)),
     vms: (data.vms?.domains || []).map((v) => ({ id: v.id, name: v.name, state: v.state })).sort((a, b) => a.name.localeCompare(b.name)),
@@ -78,7 +114,10 @@ const VM_ACTIONS = ['start', 'stop', 'pause', 'resume', 'forceStop', 'reboot', '
 export async function containerAction(id, action) {
   if (!DOCKER_ACTIONS.includes(action)) throw new Error('Unbekannte Aktion');
   const fields = action === 'updateContainer' ? '{ id state }' : '{ id state status }';
-  const r = await gql(`mutation($id: PrefixedID!) { docker { ${action}(id: $id) ${fields} } }`, { id });
+  const r = await gql(`mutation($id: PrefixedID!) { docker { ${action}(id: $id) ${fields} } }`, { id }).catch((e) => {
+    if (/Cannot query field "updateContainer"/.test(e.message)) throw new Error('Diese Unraid-Version kann Container noch nicht per API aktualisieren – bitte in Unraid unter Docker auf „Update“ klicken (oder Unraid aktualisieren).');
+    throw e;
+  });
   cache.t = 0;
   return r.docker[action];
 }

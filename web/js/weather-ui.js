@@ -77,7 +77,8 @@ export const WEATHER_TILES = {
       const body = h('div', { class: 'wx-body' }, h('div', { class: 'empty' }, 'Lade Wetter …'));
       el.append(body);
       const draw = (o) => {
-        if (o.error) return body.replaceChildren(head('weather-cloudy-alert', tile.title || 'Wetter', o.error));
+        if (o.error) return body.replaceChildren(head('weather-cloudy-alert', tile.title || 'Wetter'), h('div', { class: 'tile-sub', style: { whiteSpace: 'normal', marginTop: '8px' } }, o.error),
+          /Standort/.test(o.error) ? h('a', { class: 'btn', href: '#map', style: { marginTop: '10px', alignSelf: 'flex-start' }, onclick: (e) => e.stopPropagation() }, icon('map-marker-plus-outline'), 'Standort anlegen') : null);
         const c = o.current || {};
         const today = o.forecast?.daily?.[0];
         const big = tile.h >= 2 || tile.w >= 3;
@@ -160,7 +161,7 @@ export const WEATHER_TILES = {
       };
       el.addEventListener('click', () => { if (!S.editing) { playing = !playing; label.classList.toggle('paused', !playing); } });
       api(`/weather/radar?site=${encodeURIComponent(tile.site || '')}&km=${tile.km || 50}`).then((d) => {
-        if (d.error) { label.textContent = d.error; return; }
+        if (d.error) { label.textContent = ''; canvas.parentElement.replaceChildren(h('div', { class: 'empty' }, d.error)); return; }
         data = d;
         frames = d.frames.map((f) => ({ ...f, px: Uint8Array.from(atob(f.data), (ch) => ch.charCodeAt(0)) }));
         if (!frames.length) { label.textContent = 'Keine Radardaten'; return; }

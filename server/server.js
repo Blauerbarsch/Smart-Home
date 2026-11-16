@@ -25,7 +25,7 @@ import * as calendar from './calendar.js';
 const PORT = Number(process.env.PORT || 8080);
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
 const PASSWORD = process.env.APP_PASSWORD || '';
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 
 // ---------- Anmeldung (optional über APP_PASSWORD) ----------
 const sessions = new Set(store.readJson('sessions.json', []));
@@ -470,6 +470,15 @@ route('POST', '/api/kopf/body/reset', async (req, res) => json(res, 200, await w
 route('PUT', '/api/kopf/poses', async (req, res) => json(res, 200, wbench.savePoses(await body(req))));
 
 // Chronik
+/** „fetch failed“ sagt nichts – Ursache und Ziel nennen. */
+function friendlyError(e) {
+  if (e?.message !== 'fetch failed' || !e.cause) return e?.message || String(e);
+  const c = e.cause;
+  const where = c.address ? `${c.address}${c.port ? ':' + c.port : ''}` : c.hostname || '';
+  const why = { ECONNREFUSED: 'Verbindung abgelehnt – läuft der Dienst und ist der Port freigegeben?', ENOTFOUND: 'Adresse unbekannt', EHOSTUNREACH: 'Gerät nicht erreichbar', ETIMEDOUT: 'Zeitüberschreitung', ECONNRESET: 'Verbindung abgebrochen', UND_ERR_CONNECT_TIMEOUT: 'Zeitüberschreitung beim Verbinden' }[c.code] || c.code || c.message;
+  return `Nicht erreichbar${where ? ' (' + where + ')' : ''}: ${why}`;
+}
+
 // ---------- Wetter (DWD) + Kalender ----------
 route('GET', '/api/weather', async (req, res, p, q) => {
   try { json(res, 200, await weather.overview(q.get('site') || '')); } catch (e) { json(res, 200, { error: e.message }); }
@@ -544,8 +553,9 @@ const server = http.createServer(async (req, res) => {
     }
     json(res, 404, { error: 'Unbekannter Endpunkt' });
   } catch (e) {
-    console.error(req.method, pathname, e.message);
-    if (!res.headersSent) json(res, 500, { error: e.message });
+    const msg = friendlyError(e);
+    console.error(req.method, pathname, msg);
+    if (!res.headersSent) json(res, 500, { error: msg });
     else res.end();
   }
 });

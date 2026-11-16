@@ -439,3 +439,5 @@ body.kiosk-hide-nav #nav { display: none; }
 .bin { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 500; background: color-mix(in srgb, var(--bc) 18%, transparent); color: color-mix(in srgb, var(--bc) 70%, white); border: 1px solid color-mix(in srgb, var(--bc) 45%, transparent); }
 .site-card h4 .chip { white-space: nowrap; }
 .wx-detail p.tile-sub, .wx-warn p.tile-sub { white-space: normal; }
+/* Dezente Scrollleisten überall (statt grauer Systembalken) */
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.14) transparent; }

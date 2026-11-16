@@ -1,5 +1,5 @@
 // Service Worker: App-Hülle offline verfügbar, API immer live.
-const CACHE = 'smarthome-v4';
+const CACHE = 'smarthome-v5';
 const SHELL = ['/', '/css/app.css', '/css/hud.css', '/js/app.js', '/js/core.js', '/js/tiles.js', '/js/grid.js', '/js/editor.js',
   '/js/settings.js', '/js/map.js', '/js/workshop.js', '/js/hud-bg.js', '/js/notify.js', '/js/kiosk.js',
   '/js/server.js', '/js/floorplan.js', '/js/workshop-extra.js', '/js/workbench-ui.js', '/js/esptools.js',

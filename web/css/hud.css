@@ -164,3 +164,13 @@ textarea.hud-input { resize: vertical; min-height: 140px; line-height: 1.5; }
 .measure-new .hud-input { width: auto; flex: 1; min-width: 140px; }
 .hud label.hud-btn input { accent-color: rgb(var(--c-rgb)); }
 @media (max-width: 950px) { .hud-tools { margin-left: 0; } .hud-top { flex-wrap: wrap; row-gap: 8px; } .hud-top .clock { display: none; } }
+
+/* Werkstatt: Modus-Umschalter passt auch in schmale Spalten, dezente Scrollleisten */
+.hud-h .modes { display: flex; gap: 3px; min-width: 0; flex-wrap: nowrap; }
+.hud-h .modes .hud-btn { padding: 4px 6px; font-size: 10.5px; letter-spacing: 0.3px; }
+.hud-h .hud-btn.icon { padding: 4px 6px; }
+.hud-h { flex-wrap: nowrap; }
+.hud ::-webkit-scrollbar { width: 6px; height: 6px; }
+.hud ::-webkit-scrollbar-track { background: transparent; }
+.hud ::-webkit-scrollbar-thumb { background: rgba(var(--c-rgb), 0.25); border-radius: 3px; }
+.hud * { scrollbar-width: thin; scrollbar-color: rgba(var(--c-rgb), 0.25) transparent; }
